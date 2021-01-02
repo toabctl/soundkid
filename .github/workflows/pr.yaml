@@ -1,0 +1,22 @@
+on: [push]
+
+name: build
+
+jobs:
+  check:
+    name: soundkid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install stable rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
+      - name: Install deb packages
+        run: sudo apt-get install libasound2-dev
+      - name: Run cargo build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
