@@ -1,14 +1,13 @@
 extern crate clap;
 
-use clap::{Arg, App, crate_version};
-use log::{debug,info};
-use std::sync::mpsc;
-use std::sync::mpsc::{Sender, Receiver};
+use clap::{crate_version, App, Arg};
 use config::Config;
-use std::process::{Command, Child};
+use log::{debug, info};
 use std::env;
+use std::process::{Child, Command};
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
-
 
 fn main() {
     env_logger::init();
@@ -37,13 +36,13 @@ fn main() {
     }
 
     // handle input
-    let (reader_tx, reader_rx):(Sender<String>, Receiver<String>) = mpsc::channel();
+    let (reader_tx, reader_rx): (Sender<String>, Receiver<String>) = mpsc::channel();
     thread::spawn(|| {
         let reader = reader::Input::new(input_device_desc);
         match reader {
             Some(r) => {
                 r.handle_input(reader_tx);
-            },
+            }
             _ => {
                 panic!("Unable to create a input handler for the given input device description. Abort");
             }
@@ -55,7 +54,11 @@ fn main() {
 
     for received in reader_rx {
         if conf.tags.contains_key(&received) {
-            info!("Found key '{:?}' in tags. Playing {:?}", conf.tags[&received], conf.tags.get(&received));
+            info!(
+                "Found key '{:?}' in tags. Playing {:?}",
+                conf.tags[&received],
+                conf.tags.get(&received)
+            );
             match child {
                 None => debug!("No player to kill"),
                 Some(mut x) => {
@@ -68,27 +71,29 @@ fn main() {
             let mut path = env::current_dir().unwrap();
             path.push("target");
             path.push("debug");
-            
-            child = Some(Command::new("soundkid-player")
-                         // FIXME: do not hardcode the path
-                         .env("PATH", path.into_os_string().into_string().unwrap())
-                         .arg(conf.spotify.username.clone())
-                         .arg(conf.spotify.password.clone())
-                         .arg(conf.tags.get(&received).unwrap().clone())
-                         .spawn().expect("Unable to spawn a child process"));
+
+            child = Some(
+                Command::new("soundkid-player")
+                    // FIXME: do not hardcode the path
+                    .env("PATH", path.into_os_string().into_string().unwrap())
+                    .arg(conf.spotify.username.clone())
+                    .arg(conf.spotify.password.clone())
+                    .arg(conf.tags.get(&received).unwrap().clone())
+                    .spawn()
+                    .expect("Unable to spawn a child process"),
+            );
         } else {
             info!("Received an unknown tag: {:?}", received);
         }
     }
 }
 
-
 /// The config module that handles the soundkid configuration
 mod config {
     use log::info;
-    use std::fs;
     use serde::Deserialize;
     use std::collections::HashMap;
+    use std::fs;
 
     #[derive(Deserialize, Debug)]
     pub struct Config {
@@ -121,19 +126,17 @@ mod config {
     }
 }
 
-
 /// The reader module to get input events from the NFC card reader
 mod reader {
-    use log::{debug, info,error};
-    use evdev_rs::Device;
-    use evdev_rs::enums::EventType;
     use evdev_rs::enums::EventCode;
+    use evdev_rs::enums::EventType;
     use evdev_rs::enums::EV_KEY;
-    use std::fs::File;
-    use std::path::Path;
-    use std::os::unix::fs::FileTypeExt;
+    use evdev_rs::Device;
     use glob::glob;
-
+    use log::{debug, error, info};
+    use std::fs::File;
+    use std::os::unix::fs::FileTypeExt;
+    use std::path::Path;
 
     pub struct Input {
         device: Device,
@@ -141,7 +144,6 @@ mod reader {
     }
 
     impl Input {
-
         /// Check if the given device path seems to be ok
         fn check_device_path(device_path: &String) -> bool {
             let p = Path::new(device_path);
@@ -154,7 +156,7 @@ mod reader {
             }
             return false;
         }
-        
+
         /// Try to find the given device
         fn find_device_path(device_desc: &String) -> Option<String> {
             // 1) just try the device string as path in the filesystem
@@ -163,7 +165,9 @@ mod reader {
             }
 
             // 2) try to find the by device name (looping over all /dev/input files)
-            for path in glob("/dev/input/event*").expect("Failed to read glob pattern for /dev/input") {
+            for path in
+                glob("/dev/input/event*").expect("Failed to read glob pattern for /dev/input")
+            {
                 let path_str = path.unwrap().into_os_string().into_string().unwrap();
                 debug!("checking now device path {:?} ...", path_str);
                 let f = File::open(path_str.clone());
@@ -182,9 +186,8 @@ mod reader {
             }
             None
         }
-        
-        pub fn new(device_desc: String) -> Option<Input> {
 
+        pub fn new(device_desc: String) -> Option<Input> {
             // try first if the given string is a valid path
             let device_path = Input::find_device_path(&device_desc);
             match device_path {
@@ -197,22 +200,27 @@ mod reader {
                         input_str: String::new(),
                     };
                     return Some(i);
-                },
+                }
                 _ => {
-                    error!("Can not handle device description {:?}.
+                    error!(
+                        "Can not handle device description {:?}.
                            Try a path in /dev/input/ or a device name
-                           (eg. list with 'evtest')", device_desc);
+                           (eg. list with 'evtest')",
+                        device_desc
+                    );
                 }
             }
             None
         }
-    
+
         /// handle the input from the input source (usually a NFC reader)
         ///
         /// * `input_device` - path to the input device. eg. /dev/input/event22
         pub fn handle_input(mut self, tx: std::sync::mpsc::Sender<String>) {
             loop {
-                let a = self.device.next_event(evdev_rs::ReadFlag::NORMAL | evdev_rs::ReadFlag::BLOCKING);
+                let a = self
+                    .device
+                    .next_event(evdev_rs::ReadFlag::NORMAL | evdev_rs::ReadFlag::BLOCKING);
                 match a {
                     Ok(k) => {
                         match k.1.event_type {
@@ -236,10 +244,10 @@ mod reader {
                                             self.input_str.clear();
                                         }
                                     }
-                                    _ => ()
+                                    _ => (),
                                 }
                             }
-                            _ => ()
+                            _ => (),
                         }
                     }
                     Err(_e) => (),
