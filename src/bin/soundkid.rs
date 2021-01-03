@@ -55,10 +55,8 @@ fn main() {
     for received in reader_rx {
         if conf.tags.contains_key(&received) {
             info!(
-                "Found key '{:?}' in tags. Playing {:?}",
-                conf.tags[&received],
-                conf.tags.get(&received)
-            );
+                "Found key '{:?}' in tags", conf.tags[&received]);
+
             match child {
                 None => debug!("No player to kill"),
                 Some(mut x) => {
