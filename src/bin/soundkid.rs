@@ -2,7 +2,9 @@ extern crate clap;
 
 use clap::{crate_version, App, Arg};
 use config::Config;
-use log::{debug, info};
+use log::info;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::env;
 use std::process::{Child, Command};
 use std::sync::mpsc;
@@ -54,36 +56,63 @@ fn main() {
 
     for received in reader_rx {
         if conf.tags.contains_key(&received) {
-            info!(
-                "Found key '{:?}' in tags", conf.tags[&received]);
+            info!("Found key '{:?}' in tags", conf.tags[&received]);
 
-            match child {
-                None => debug!("No player to kill"),
-                Some(mut x) => {
-                    info!("killing player...");
-                    x.kill().unwrap();
-                }
+            if conf.tags.get(&received).unwrap() == "PAUSE" {
+                pause(&mut child);
+            } else if conf.tags.get(&received).unwrap() == "RESUME" {
+                resume(&mut child);
+            } else {
+                play(&mut child, &conf, &received);
             }
-
-            // possible path to the soundkid-player binary (for debugging)
-            let mut path = env::current_dir().unwrap();
-            path.push("target");
-            path.push("debug");
-
-            child = Some(
-                Command::new("soundkid-player")
-                    // FIXME: do not hardcode the path
-                    .env("PATH", path.into_os_string().into_string().unwrap())
-                    .arg(conf.spotify.username.clone())
-                    .arg(conf.spotify.password.clone())
-                    .arg(conf.tags.get(&received).unwrap().clone())
-                    .spawn()
-                    .expect("Unable to spawn a child process"),
-            );
         } else {
             info!("Received an unknown tag: {:?}", received);
         }
     }
+}
+
+/// pause the current child (soundkid-player) process
+fn pause(child: &mut Option<Child>) {
+    if let Some(x) = child {
+        info!("Pause process with PID {:?}", x.id());
+        signal::kill(Pid::from_raw(x.id() as i32), Signal::SIGTSTP).unwrap();
+    }
+}
+
+/// resume the current child (soundkid-player) process
+fn resume(child: &mut Option<Child>) {
+    if let Some(x) = child {
+        info!("Resume process with PID {:?}", x.id());
+        signal::kill(Pid::from_raw(x.id() as i32), Signal::SIGCONT).unwrap();
+    }
+}
+
+fn play(child: &mut Option<Child>, conf: &Config, tag: &String) {
+    if let Some(x) = child {
+        info!("Killing current player processs with PID: {}", x.id());
+        x.kill().unwrap();
+    }
+    //start a new child
+    // possible path to the soundkid-player binary (for debugging)
+    let mut path = env::current_dir().unwrap();
+    path.push("target");
+    path.push("debug");
+
+    info!(
+        "Starting soundkid-player process for tag {} / uri {}...",
+        tag,
+        conf.tags.get(tag).unwrap()
+    );
+    *child = Some(
+        Command::new("soundkid-player")
+            // FIXME: do not hardcode the path
+            .env("PATH", path.into_os_string().into_string().unwrap())
+            .arg(conf.spotify.username.clone())
+            .arg(conf.spotify.password.clone())
+            .arg(conf.tags.get(tag).unwrap().clone())
+            .spawn()
+            .expect("Unable to spawn a child process"),
+    );
 }
 
 /// The config module that handles the soundkid configuration
