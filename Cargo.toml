@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 log = "0.4"
 env_logger = "0.8"
+nix = "0.19.1"
 glob = "0.3.0"
 clap = "2.33.3"
 evdev-rs = "0.3.1"
