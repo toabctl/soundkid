@@ -1,15 +1,15 @@
 # soundkid - a spotify music player for kids
 
 soundkid is software that can be used by kids for playing music from
-(Spotify)[https://www.spotify.com/] without using a complicated interface
+[Spotify](https://www.spotify.com/) without using a complicated interface
 like a display. Instead it can be used with a RFID Reader 
-(I'm currently using a (Neuftech USB RFID Reader)[https://www.amazon.de/Neuftech-Reader-Kartenleseger%C3%A4t-Kartenleser-Kontaktlos/dp/B018OYOR3E]) to interact with the music box.
+(I'm currently using a [Neuftech USB RFID Reader](https://www.amazon.de/Neuftech-Reader-Kartenleseger%C3%A4t-Kartenleser-Kontaktlos/dp/B018OYOR3E)) to interact with the music box.
 
-soundkid is inspired by (Phoniebox)[http://phoniebox.de/] 
-and (Toniebox)[https://tonies.de/] and uses 
-(librespot)[https://github.com/librespot-org/librespot] to interact with Spotify.
+soundkid is inspired by [Phoniebox](http://phoniebox.de/) 
+and [Toniebox](https://tonies.de/) and uses 
+[librespot](https://github.com/librespot-org/librespot) to interact with Spotify.
 I started my own project instead of using Phoniebox to learn more about the
-(Rust language)[https://www.rust-lang.org/].
+[Rust language](https://www.rust-lang.org/).
 
 ## Overview
 
@@ -74,8 +74,8 @@ RUST_BACKTRACE=full RUST_LOG=debug cargo run --bin soundkid
 
 ## Contributions
 
-Please use (github pull requests)[https://github.com/toabctl/soundkid/pulls] for code/doc changes
-and (github issues)[https://github.com/toabctl/soundkid/issues] to report problems or ask questions.
+Please use [github pull requests](https://github.com/toabctl/soundkid/pulls) for code/doc changes
+and [github issues](https://github.com/toabctl/soundkid/issues) to report problems or ask questions.
 
 ## License
-The code is licensed under the (Apache-2.0)[https://www.apache.org/licenses/LICENSE-2.0] license.
+The code is licensed under the [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) license.
