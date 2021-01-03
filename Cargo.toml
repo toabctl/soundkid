@@ -4,6 +4,7 @@ name = "soundkid"
 version = "0.1.0"
 authors = ["Thomas Bechtold <tbechtold@suse.com>"]
 edition = "2018"
+readme = "README.md"
 
 [dependencies]
 log = "0.4"
