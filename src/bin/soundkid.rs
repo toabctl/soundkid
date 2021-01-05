@@ -62,6 +62,10 @@ fn main() {
                 pause(&mut child);
             } else if conf.tags.get(&received).unwrap() == "RESUME" {
                 resume(&mut child);
+            } else if conf.tags.get(&received).unwrap() == "VOLUME_INCREASE" {
+                volume_increase();
+            } else if conf.tags.get(&received).unwrap() == "VOLUME_DECREASE" {
+                volume_decrease();
             } else {
                 play(&mut child, &conf, &received);
             }
@@ -85,6 +89,24 @@ fn resume(child: &mut Option<Child>) {
         info!("Resume process with PID {:?}", x.id());
         signal::kill(Pid::from_raw(x.id() as i32), Signal::SIGCONT).unwrap();
     }
+}
+
+/// increase the volume via alsa
+fn volume_increase() {
+    // FIXME: do not hardcode the alsa mixer name
+    let _output = Command::new("amixer")
+        .args(&["set", "SoftMaster", "5%+"])
+        .output()
+        .expect("failed to increase volume via amixer");
+}
+
+/// increase the volume via alsa
+fn volume_decrease() {
+    // FIXME: do not hardcode the alsa mixer name
+    let _output = Command::new("amixer")
+        .args(&["set", "SoftMaster", "5%-"])
+        .output()
+        .expect("failed to decrease volume via amixer");
 }
 
 fn play(child: &mut Option<Child>, conf: &Config, tag: &String) {
