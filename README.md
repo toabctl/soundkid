@@ -40,18 +40,23 @@ spotify:
 tags:
   00000044886655661122: "spotify:playlist:43nVldajDhG1YVwZKxVh"
   00000011559977882233: "https://open.spotify.com/album/7LQhG0xSDjFiKJnziyB3Zj?si=eFQbWbq0Q16q6Go8tjlCvw"
-  00000011666611330099: "RESUME"
   00000044772255668800: "https://open.spotify.com/album/5N73vwGXol4maS9U6HLp0o?si=oWBQKSpWReuOPnr50ayWSw"
   00000044772255668800: "PAUSE"
+  00000011666611330099: "RESUME"
+  00000011666611330100: "VOLUME_INCREASE"
+  00000011666611330101: "VOLUME_DECREASE"
 ```
 
 The `input_device_description` is either a path to an input device (eg. `/dev/input/event15`) or
 a string with the device name (try `sudo evtest` to find out what device name the RFID Reader has).
 For Spotify, `username` and `password` must be given.
 The `tags` section maps the keys (which come from the input device) to an action. The action
-can be either some spotify URI or some special actions. Currently, there is `PAUSE` (which pause
-the current `soundkid-player` process) or `RESUME` (which resume the paused `soundkid-player`
-process.
+can be either some spotify URI or some special actions. Currently there are the following special actions:
+
+- `PAUSE`: pause the current `soundkid-player` process
+- `RESUME` which resume the paused `soundkid-player` process
+- `VOLUME_INCREASE` increase the volume by 5%
+- `VOLUME_DECREASE` decrease the volume by 5%
 
 ## Debugging
 Build the project with:
