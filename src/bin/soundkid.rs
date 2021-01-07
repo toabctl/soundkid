@@ -5,7 +5,7 @@ extern crate soundkid;
 use soundkid::config;
 use soundkid::reader;
 
-use clap::{crate_version, App, Arg};
+use clap::{crate_version, App};
 use config::Config;
 use gpio_cdev::{Chip, EventRequestFlags, LineRequestFlags};
 use log::info;
@@ -21,28 +21,16 @@ fn main() {
     env_logger::init();
     info!("Starting soundkid ...");
 
-    let matches = App::new("soundkid")
-       .version(crate_version!())
-       .about("Sound player for kids")
+    let _matches = App::new("soundkid")
+        .version(crate_version!())
+        .about("Sound player for kids")
         .author("Thomas Bechtold <thomasbechtold@jpberlin.de>")
-        .arg(Arg::with_name("input_device_description")
-             .long("input_device_description")
-             .takes_value(true)
-             .help("The input device description (usually a NFC reader) to use. Eg. '/dev/input/event0'"))
-       .get_matches();
+        .get_matches();
 
     // get the configuration
     let conf = Config::new();
 
-    let mut input_device_desc = String::new();
-
-    // command line argument wins against config file parameter
-    if matches.occurrences_of("input_device_description") > 0 {
-        input_device_desc = String::from(matches.value_of("input_device_description").unwrap());
-    } else {
-        input_device_desc = conf.common.input_device_description.clone();
-    }
-
+    let input_device_desc = conf.common.input_device_description.clone();
     // handle input
     let (reader_tx, reader_rx): (Sender<String>, Receiver<String>) = mpsc::channel();
     thread::spawn(|| {
