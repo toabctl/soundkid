@@ -5,7 +5,7 @@ extern crate soundkid;
 use soundkid::config;
 use soundkid::reader;
 
-use clap::{crate_version, App, Arg};
+use clap::{crate_version, App};
 use config::Config;
 use gpio_cdev::{Chip, EventRequestFlags, LineRequestFlags};
 use log::info;
@@ -21,41 +21,37 @@ fn main() {
     env_logger::init();
     info!("Starting soundkid ...");
 
-    let matches = App::new("soundkid")
-       .version(crate_version!())
-       .about("Sound player for kids")
+    let _matches = App::new("soundkid")
+        .version(crate_version!())
+        .about("Sound player for kids")
         .author("Thomas Bechtold <thomasbechtold@jpberlin.de>")
-        .arg(Arg::with_name("input_device_description")
-             .long("input_device_description")
-             .takes_value(true)
-             .help("The input device description (usually a NFC reader) to use. Eg. '/dev/input/event0'"))
-       .get_matches();
+        .get_matches();
 
     // get the configuration
     let conf = Config::new();
 
-    let mut input_device_desc = String::new();
-
-    // command line argument wins against config file parameter
-    if matches.occurrences_of("input_device_description") > 0 {
-        input_device_desc = String::from(matches.value_of("input_device_description").unwrap());
-    } else {
-        input_device_desc = conf.common.input_device_description.clone();
-    }
-
-    // handle input
-    let (reader_tx, reader_rx): (Sender<String>, Receiver<String>) = mpsc::channel();
-    thread::spawn(|| {
-        let reader = reader::Input::new(input_device_desc);
-        match reader {
-            Some(r) => {
-                r.handle_input(reader_tx);
-            }
-            _ => {
-                panic!("Unable to create a input handler for the given input device description. Abort");
-            }
+    // handle evdev input
+    let (input_reader_tx, input_reader_rx): (Sender<(String, String)>, Receiver<(String, String)>) =
+        mpsc::channel();
+    if !conf.input.is_empty() {
+        for (input_device, _input_device_actions) in conf.input.clone() {
+            info!("Found config for input device {}", input_device);
+            let ir_tx = input_reader_tx.clone();
+            thread::spawn(|| {
+                let reader = reader::Input::new(input_device);
+                match reader {
+                    Some(r) => {
+                        r.handle_input(ir_tx);
+                    }
+                    _ => {
+                        panic!("Unable to create a input handler for the given input device description. Abort");
+                    }
+                }
+            });
         }
-    });
+    } else {
+        info!("No input config found. Skipping input handling");
+    }
 
     // the player process
     let mut child: Option<Child> = None;
@@ -93,23 +89,34 @@ fn main() {
         info!("No GPIO config found. Skipping GPIO handling");
     }
 
-    for received in reader_rx {
-        if conf.tags.contains_key(&received) {
-            info!("Found key '{:?}' in tags", conf.tags[&received]);
+    for (input_device_desc, action) in input_reader_rx {
+        if conf.input.contains_key(&input_device_desc) {
+            if conf.input[&input_device_desc].contains_key(&action) {
+                let action = conf.input[&input_device_desc][&action].clone();
+                info!(
+                    "Found received action '{:?}' in '{:?}'",
+                    action, input_device_desc
+                );
 
-            if conf.tags.get(&received).unwrap() == "PAUSE" {
-                pause(&mut child);
-            } else if conf.tags.get(&received).unwrap() == "RESUME" {
-                resume(&mut child);
-            } else if conf.tags.get(&received).unwrap() == "VOLUME_INCREASE" {
-                volume_increase();
-            } else if conf.tags.get(&received).unwrap() == "VOLUME_DECREASE" {
-                volume_decrease();
+                if action == "PAUSE" {
+                    pause(&mut child);
+                } else if action == "RESUME" {
+                    resume(&mut child);
+                } else if action == "VOLUME_INCREASE" {
+                    volume_increase();
+                } else if action == "VOLUME_DECREASE" {
+                    volume_decrease();
+                } else {
+                    play(&mut child, &conf, &action);
+                }
             } else {
-                play(&mut child, &conf, &received);
+                info!(
+                    "Received an unknown action '{:?}' for input device {:?}",
+                    action, input_device_desc
+                );
             }
         } else {
-            info!("Received an unknown tag: {:?}", received);
+            info!("Received an unknown input device {:?}", input_device_desc)
         }
     }
 }
@@ -148,7 +155,7 @@ fn volume_decrease() {
         .expect("failed to decrease volume via amixer");
 }
 
-fn play(child: &mut Option<Child>, conf: &Config, tag: &String) {
+fn play(child: &mut Option<Child>, conf: &Config, action: &String) {
     if let Some(x) = child {
         info!("Killing current player processs with PID: {}", x.id());
         x.kill().unwrap();
@@ -159,18 +166,14 @@ fn play(child: &mut Option<Child>, conf: &Config, tag: &String) {
     path.push("target");
     path.push("debug");
 
-    info!(
-        "Starting soundkid-player process for tag {} / uri {}...",
-        tag,
-        conf.tags.get(tag).unwrap()
-    );
+    info!("Starting soundkid-player process for action {} ...", action);
     *child = Some(
         Command::new("soundkid-player")
             // FIXME: do not hardcode the path
             .env("PATH", path.into_os_string().into_string().unwrap())
             .arg(conf.spotify.username.clone())
             .arg(conf.spotify.password.clone())
-            .arg(conf.tags.get(tag).unwrap().clone())
+            .arg(action.clone())
             .spawn()
             .expect("Unable to spawn a child process"),
     );

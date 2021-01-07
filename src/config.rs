@@ -9,16 +9,11 @@ use std::path::PathBuf;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    pub common: ConfigCommon,
     #[serde(default)]
     pub gpio: HashMap<String, HashMap<u32, String>>,
+    #[serde(default)]
+    pub input: HashMap<String, HashMap<String, String>>,
     pub spotify: ConfigSpotify,
-    pub tags: HashMap<String, String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct ConfigCommon {
-    pub input_device_description: String,
 }
 
 #[derive(Deserialize, Debug)]
