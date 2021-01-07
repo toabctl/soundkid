@@ -7,6 +7,7 @@ use soundkid::reader;
 
 use clap::{crate_version, App, Arg};
 use config::Config;
+use gpio_cdev::{Chip, EventRequestFlags, LineRequestFlags};
 use log::info;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
@@ -58,6 +59,39 @@ fn main() {
 
     // the player process
     let mut child: Option<Child> = None;
+
+    // handle GPIO input
+    if !conf.gpio.is_empty() {
+        for (gpio_device, gpio_device_actions) in conf.gpio.clone() {
+            info!("Found config for GPIO device {}", gpio_device);
+            for (gpio_line, gpio_action) in gpio_device_actions {
+                let dev = gpio_device.clone();
+                info!("Watching GPIO line {} on device {} now", gpio_line, dev);
+                thread::spawn(move || {
+                    let mut chip = Chip::new(dev).unwrap();
+                    let input = chip.get_line(gpio_line).unwrap();
+                    for _event in input
+                        .events(
+                            LineRequestFlags::INPUT,
+                            // NOTE: do we need to handle also RISING_EDGE?
+                            EventRequestFlags::FALLING_EDGE,
+                            "mirror-gpio",
+                        )
+                        .unwrap()
+                    {
+                        // FIXME: DRY and PAUSE & RESUME are currently not supported
+                        if gpio_action == "VOLUME_INCREASE" {
+                            volume_increase();
+                        } else if gpio_action == "VOLUME_DECREASE" {
+                            volume_decrease();
+                        }
+                    }
+                });
+            }
+        }
+    } else {
+        info!("No GPIO config found. Skipping GPIO handling");
+    }
 
     for received in reader_rx {
         if conf.tags.contains_key(&received) {
