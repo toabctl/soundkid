@@ -87,7 +87,7 @@ impl Input {
     /// handle the input from the input source (usually a NFC reader)
     ///
     /// * `input_device` - path to the input device. eg. /dev/input/event22
-    pub fn handle_input(mut self, tx: std::sync::mpsc::Sender<String>) {
+    pub fn handle_input(mut self, tx: std::sync::mpsc::Sender<(String, String)>) {
         loop {
             let a = self
                 .device
@@ -110,7 +110,8 @@ impl Input {
                                 EventCode::EV_KEY(EV_KEY::KEY_ENTER) => {
                                     if self.input_str.len() > 0 {
                                         //info!("GOT enter. process/send current command: {}", self.input_str);
-                                        tx.send(self.input_str.clone()).unwrap();
+                                        tx.send((self.device_desc.clone(), self.input_str.clone()))
+                                            .unwrap();
                                         // cleanup current command
                                         self.input_str.clear();
                                     }

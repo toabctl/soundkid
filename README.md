@@ -36,26 +36,32 @@ gpio:  # GPIO config is optional
   "/dev/gpiochip0":  # this is the GPIO device path
     5: "VOLUME_DECREASE"  # this is a mapping between the GPIO pin (5 in this case) and the action
     6: "VOLUME_INCREASE"  # another mapping
-common:
-  input_device_description: "HXGCoLtd Keyboard"
+input:
+  "HXGCoLtd Keyboard":
+    00000044886655661122: "spotify:playlist:43nVldajDhG1YVwZKxVh"
+    00000011559977882233: "https://open.spotify.com/album/7LQhG0xSDjFiKJnziyB3Zj?si=eFQbWbq0Q16q6Go8tjlCvw"
+    00000044772255668800: "https://open.spotify.com/album/5N73vwGXol4maS9U6HLp0o?si=oWBQKSpWReuOPnr50ayWSw"
+    00000044772255668800: "PAUSE"
+    00000011666611330099: "RESUME"
+    00000011666611330100: "VOLUME_INCREASE"
+    00000011666611330101: "VOLUME_DECREASE"
 spotify:
   username: "my-spotify-username"
   password: "my-secret-spotify-password"
-tags:
-  00000044886655661122: "spotify:playlist:43nVldajDhG1YVwZKxVh"
-  00000011559977882233: "https://open.spotify.com/album/7LQhG0xSDjFiKJnziyB3Zj?si=eFQbWbq0Q16q6Go8tjlCvw"
-  00000044772255668800: "https://open.spotify.com/album/5N73vwGXol4maS9U6HLp0o?si=oWBQKSpWReuOPnr50ayWSw"
-  00000044772255668800: "PAUSE"
-  00000011666611330099: "RESUME"
-  00000011666611330100: "VOLUME_INCREASE"
-  00000011666611330101: "VOLUME_DECREASE"
 ```
 
-The `input_device_description` is either a path to an input device (eg. `/dev/input/event15`) or
-a string with the device name (try `sudo evtest` to find out what device name the RFID Reader has).
-For Spotify, `username` and `password` must be given.
-The `tags` section maps the keys (which come from the input device) to an action. The action
-can be either some spotify URI or some special actions. Currently there are the following special actions:
+The `gpio` map is optional and can be used to map actions to GPIO pins. The `gpio` map contains another map
+with the GPIO device name as key. The value is another key/value pair where the key (in the example 5 or 6)
+is the GPIO pin and the value (in the example "VOLUME_DECREASE" and "VOLUME_INCREASE") is the action.
+
+The `input` map is similar to the `gpio` map. "HXGCoLtd Keyboard" is the key (this could also be
+eg. `/dev/input/event15`, try `sudo evtest` to get information about the available devices) and under 
+that key is another map that contains key/value pairs of tags (in this example the values starting with 00000)
+and actions (in this example spotify uris or other actions like "PAUSE", "RESUME", ...)
+
+The `spotify` map must contain `username` and `password`.
+
+The following actions (beside the spotify URIs) are currently available:
 
 - `PAUSE`: pause the current `soundkid-player` process
 - `RESUME` which resume the paused `soundkid-player` process
