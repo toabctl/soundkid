@@ -144,6 +144,7 @@ fn volume_increase() {
         .args(&["set", "SoftMaster", "5%+"])
         .output()
         .expect("failed to increase volume via amixer");
+    info!("Increased volume by 5%");
 }
 
 /// increase the volume via alsa
@@ -153,6 +154,7 @@ fn volume_decrease() {
         .args(&["set", "SoftMaster", "5%-"])
         .output()
         .expect("failed to decrease volume via amixer");
+    info!("Decreased volume by 5%");
 }
 
 fn play(child: &mut Option<Child>, conf: &Config, action: &String) {
