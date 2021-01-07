@@ -10,6 +10,7 @@ use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 
 pub struct Input {
+    device_desc: String,
     device: Device,
     input_str: String,
 }
@@ -65,6 +66,7 @@ impl Input {
                 let d = Device::new_from_fd(f).unwrap();
                 info!("Using device {:?} ({:?})", dp, d.name().unwrap());
                 let i = Input {
+                    device_desc: device_desc,
                     device: d,
                     input_str: String::new(),
                 };
