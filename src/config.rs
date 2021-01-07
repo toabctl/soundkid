@@ -10,6 +10,8 @@ use std::path::PathBuf;
 #[derive(Deserialize, Debug)]
 pub struct Config {
     pub common: ConfigCommon,
+    #[serde(default)]
+    pub gpio: HashMap<String, HashMap<u32, String>>,
     pub spotify: ConfigSpotify,
     pub tags: HashMap<String, String>,
 }

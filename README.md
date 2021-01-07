@@ -32,6 +32,10 @@ input events from the input device (eg. the RFID Reader) and then starts
 The configuration must be located at `~/.soundkid.conf` and should be YAML. Here's an example:
 ```
 ---
+gpio:  # GPIO config is optional
+  "/dev/gpiochip0":  # this is the GPIO device path
+    5: "VOLUME_DECREASE"  # this is a mapping between the GPIO pin (5 in this case) and the action
+    6: "VOLUME_INCREASE"  # another mapping
 common:
   input_device_description: "HXGCoLtd Keyboard"
 spotify:
