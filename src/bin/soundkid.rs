@@ -140,7 +140,6 @@ fn resume(child: &mut Option<Child>) {
 
 /// increase the volume via alsa
 fn volume_increase(alsa_control: String) {
-    // FIXME: do not hardcode the alsa mixer name
     let _output = Command::new("amixer")
         .args(&["set", alsa_control.as_str(), "5%+"])
         .output()
@@ -150,7 +149,6 @@ fn volume_increase(alsa_control: String) {
 
 /// increase the volume via alsa
 fn volume_decrease(alsa_control: String) {
-    // FIXME: do not hardcode the alsa mixer name
     let _output = Command::new("amixer")
         .args(&["set", alsa_control.as_str(), "5%-"])
         .output()
