@@ -62,6 +62,7 @@ fn main() {
             info!("Found config for GPIO device {}", gpio_device);
             for (gpio_line, gpio_action) in gpio_device_actions {
                 let dev = gpio_device.clone();
+                let alsa_control = conf.alsa.control.clone();
                 info!("Watching GPIO line {} on device {} now", gpio_line, dev);
                 thread::spawn(move || {
                     let mut chip = Chip::new(dev).unwrap();
@@ -77,9 +78,9 @@ fn main() {
                     {
                         // FIXME: DRY and PAUSE & RESUME are currently not supported
                         if gpio_action == "VOLUME_INCREASE" {
-                            volume_increase();
+                            volume_increase(alsa_control.clone());
                         } else if gpio_action == "VOLUME_DECREASE" {
-                            volume_decrease();
+                            volume_decrease(alsa_control.clone());
                         }
                     }
                 });
@@ -103,9 +104,9 @@ fn main() {
                 } else if action == "RESUME" {
                     resume(&mut child);
                 } else if action == "VOLUME_INCREASE" {
-                    volume_increase();
+                    volume_increase(conf.alsa.control.clone());
                 } else if action == "VOLUME_DECREASE" {
-                    volume_decrease();
+                    volume_decrease(conf.alsa.control.clone());
                 } else {
                     play(&mut child, &conf, &action);
                 }
@@ -138,20 +139,20 @@ fn resume(child: &mut Option<Child>) {
 }
 
 /// increase the volume via alsa
-fn volume_increase() {
+fn volume_increase(alsa_control: String) {
     // FIXME: do not hardcode the alsa mixer name
     let _output = Command::new("amixer")
-        .args(&["set", "SoftMaster", "5%+"])
+        .args(&["set", alsa_control.as_str(), "5%+"])
         .output()
         .expect("failed to increase volume via amixer");
     info!("Increased volume by 5%");
 }
 
 /// increase the volume via alsa
-fn volume_decrease() {
+fn volume_decrease(alsa_control: String) {
     // FIXME: do not hardcode the alsa mixer name
     let _output = Command::new("amixer")
-        .args(&["set", "SoftMaster", "5%-"])
+        .args(&["set", alsa_control.as_str(), "5%-"])
         .output()
         .expect("failed to decrease volume via amixer");
     info!("Decreased volume by 5%");

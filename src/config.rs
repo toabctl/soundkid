@@ -7,12 +7,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+fn default_alsa_control() -> String {
+    return "Master".to_string();
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Config {
     #[serde(default)]
     pub gpio: HashMap<String, HashMap<u32, String>>,
     #[serde(default)]
     pub input: HashMap<String, HashMap<String, String>>,
+    pub alsa: ConfigAlsa,
     pub spotify: ConfigSpotify,
 }
 
@@ -20,6 +25,12 @@ pub struct Config {
 pub struct ConfigSpotify {
     pub username: String,
     pub password: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ConfigAlsa {
+    #[serde(default = "default_alsa_control")]
+    pub control: String,
 }
 
 impl Config {

@@ -45,6 +45,8 @@ input:
     00000011666611330099: "RESUME"
     00000011666611330100: "VOLUME_INCREASE"
     00000011666611330101: "VOLUME_DECREASE"
+alsa:
+  control: "SoftMaster"
 spotify:
   username: "my-spotify-username"
   password: "my-secret-spotify-password"
@@ -58,6 +60,9 @@ The `input` map is similar to the `gpio` map. "HXGCoLtd Keyboard" is the key (th
 eg. `/dev/input/event15`, try `sudo evtest` to get information about the available devices) and under 
 that key is another map that contains key/value pairs of tags (in this example the values starting with 00000)
 and actions (in this example spotify uris or other actions like "PAUSE", "RESUME", ...)
+
+The `alsa` map has currently only `control` key. That's the ALSA control (try `amixer` to get a list of
+controls) to that is used to increase/decrease the volume.
 
 The `spotify` map must contain `username` and `password`.
 
