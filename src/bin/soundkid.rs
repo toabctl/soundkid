@@ -144,7 +144,7 @@ fn volume_increase(alsa_control: String) {
         .args(&["set", alsa_control.as_str(), "5%+"])
         .output()
         .expect("failed to increase volume via amixer");
-    info!("Increased volume by 5%");
+    info!("Increased volume for control {} by 5%", alsa_control);
 }
 
 /// increase the volume via alsa
@@ -153,7 +153,7 @@ fn volume_decrease(alsa_control: String) {
         .args(&["set", alsa_control.as_str(), "5%-"])
         .output()
         .expect("failed to decrease volume via amixer");
-    info!("Decreased volume by 5%");
+    info!("Decreased volume for control {} by 5%", alsa_control);
 }
 
 fn play(child: &mut Option<Child>, conf: &Config, action: &String) {
