@@ -16,6 +16,7 @@ use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
+use std::time::Instant;
 
 fn main() {
     env_logger::init();
@@ -65,8 +66,9 @@ fn main() {
                 let alsa_control = conf.alsa.control.clone();
                 info!("Watching GPIO line {} on device {} now", gpio_line, dev);
                 thread::spawn(move || {
-                    let mut chip = Chip::new(dev).unwrap();
+                    let mut chip = Chip::new(dev.clone()).unwrap();
                     let input = chip.get_line(gpio_line).unwrap();
+                    let mut last_falling_event: Instant = Instant::now();
                     for _event in input
                         .events(
                             LineRequestFlags::INPUT,
@@ -76,12 +78,18 @@ fn main() {
                         )
                         .unwrap()
                     {
-                        // FIXME: DRY and PAUSE & RESUME are currently not supported
-                        if gpio_action == "VOLUME_INCREASE" {
-                            volume_increase(alsa_control.clone());
-                        } else if gpio_action == "VOLUME_DECREASE" {
-                            volume_decrease(alsa_control.clone());
+                        // very simple debounce method to not retrigger actions for bouncing buttons
+                        if last_falling_event.elapsed().as_millis() > 200 {
+                            // FIXME: DRY and PAUSE & RESUME are currently not supported
+                            if gpio_action == "VOLUME_INCREASE" {
+                                volume_increase(alsa_control.clone());
+                            } else if gpio_action == "VOLUME_DECREASE" {
+                                volume_decrease(alsa_control.clone());
+                            }
+                        } else {
+                            info!("Not doing anything for GPIO falling event on dev {} line {} - 200 ms not passed since last falling event", dev, gpio_line);
                         }
+                        last_falling_event = Instant::now();
                     }
                 });
             }
