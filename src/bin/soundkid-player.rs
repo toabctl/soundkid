@@ -1,4 +1,5 @@
 extern crate clap;
+extern crate dirs;
 
 use clap::{crate_version, App, Arg};
 
@@ -38,6 +39,7 @@ fn main() {
 mod player {
     use http::Uri;
     use librespot::core::authentication::Credentials;
+    use librespot::core::cache::Cache;
     use librespot::core::config::SessionConfig;
     use librespot::core::session::Session;
     use librespot::core::spotify_id::SpotifyId;
@@ -46,6 +48,8 @@ mod player {
     use librespot::playback::config::PlayerConfig;
     use librespot::playback::player::Player;
     use log::{info, warn};
+    use std::fs;
+    use std::path::PathBuf;
     use tokio_core::reactor::Core;
 
     pub struct SpotifyPlayer {
@@ -66,11 +70,20 @@ mod player {
             let mut c = Core::new().unwrap();
             let session_config = SessionConfig::default();
             let credentials = Credentials::with_password(username, password);
+            let mut cache_dir = PathBuf::new();
+
+            cache_dir.push(dirs::home_dir().unwrap());
+            cache_dir.push(".cache");
+            cache_dir.push("soundkid");
+
+            info!("Using cache dir {:?}", cache_dir);
+            fs::create_dir_all(cache_dir.clone()).unwrap();
+            let cache = Cache::new(cache_dir, true);
             let s = c
                 .run(Session::connect(
                     session_config,
                     credentials,
-                    None,
+                    Some(cache),
                     c.handle(),
                 ))
                 .unwrap();
