@@ -92,6 +92,9 @@ Running `soundkid`:
 RUST_BACKTRACE=full RUST_LOG=debug cargo run --bin soundkid
 ```
 
+## Building a .deb package
+Install cargo deb with `cargo install cargo-deb` and then build the package with `cargo deb`.
+
 ## Contributions
 
 Please use [github pull requests](https://github.com/toabctl/soundkid/pulls) for code/doc changes

@@ -1,0 +1,10 @@
+[Unit]
+Description=soundkid service
+
+[Service]
+Type=simple
+Restart=on-failure
+ExecStart=/usr/bin/soundkid
+
+[Install]
+WantedBy=multi-user.target

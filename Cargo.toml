@@ -20,3 +20,9 @@ tokio-core = "0.1.17"
 http = "0.2.1"
 dirs = "3.0"
 gpio-cdev = "0.4"
+
+[package.metadata.deb]
+license-file = ["LICENSE"]
+copyright = "Copyright (c) 2021, Thomas Bechtold <thomasbechtold@jpberlin.de>"
+maintainer-scripts = "debian/"
+systemd-units = { unit-name = "soundkid", enable = false }

@@ -8,7 +8,7 @@ use soundkid::reader;
 use clap::{crate_version, App};
 use config::Config;
 use gpio_cdev::{Chip, EventRequestFlags, LineRequestFlags};
-use log::info;
+use log::{debug, info};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::env;
@@ -87,7 +87,7 @@ fn main() {
                                 volume_decrease(alsa_control.clone());
                             }
                         } else {
-                            info!("Not doing anything for GPIO falling event on dev {} line {} - 200 ms not passed since last falling event", dev, gpio_line);
+                            debug!("Not doing anything for GPIO falling event on dev {} line {} - 200 ms not passed since last falling event", dev, gpio_line);
                         }
                         last_falling_event = Instant::now();
                     }
