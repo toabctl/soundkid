@@ -12,6 +12,7 @@ use log::{debug, info};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::env;
+use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -171,15 +172,19 @@ fn play(child: &mut Option<Child>, conf: &Config, action: &String) {
     }
     //start a new child
     // possible path to the soundkid-player binary (for debugging)
-    let mut path = env::current_dir().unwrap();
-    path.push("target");
-    path.push("debug");
-
+    let paths = [
+        Path::new("./target/debug"),
+        Path::new("./target/release"),
+        Path::new("/usr/local/bin"),
+        Path::new("/usr/bin"),
+        Path::new("/bin"),
+    ];
+    let path_os_string = env::join_paths(paths.iter()).unwrap();
     info!("Starting soundkid-player process for action {} ...", action);
     *child = Some(
         Command::new("soundkid-player")
             // FIXME: do not hardcode the path
-            .env("PATH", path.into_os_string().into_string().unwrap())
+            .env("PATH", path_os_string.into_string().unwrap())
             .arg(conf.spotify.username.clone())
             .arg(conf.spotify.password.clone())
             .arg(action.clone())
