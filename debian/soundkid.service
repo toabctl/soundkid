@@ -4,6 +4,7 @@ Description=soundkid service
 [Service]
 Type=simple
 Restart=on-failure
+Environment=RUST_LOG=debug
 ExecStart=/usr/bin/soundkid
 
 [Install]
