@@ -11,7 +11,7 @@ fn default_alsa_control() -> String {
     return "Master".to_string();
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     #[serde(default)]
     pub gpio: HashMap<String, HashMap<u32, String>>,
@@ -21,13 +21,13 @@ pub struct Config {
     pub spotify: ConfigSpotify,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ConfigSpotify {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ConfigAlsa {
     #[serde(default = "default_alsa_control")]
     pub control: String,

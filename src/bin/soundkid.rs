@@ -3,23 +3,142 @@ extern crate clap;
 extern crate soundkid;
 
 use soundkid::config;
+use soundkid::player;
 use soundkid::reader;
 
 use clap::{crate_version, App};
 use config::Config;
-use gpio_cdev::{Chip, EventRequestFlags, LineRequestFlags};
-use log::{debug, info};
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
+use evdev::{InputEventKind, Key};
+use futures::stream::StreamExt;
+use gpio_cdev::{AsyncLineEventHandle, Chip, EventRequestFlags, LineRequestFlags};
+use log::{debug, info, warn};
 use std::env;
-use std::path::Path;
-use std::process::{Child, Command};
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
-use std::thread;
-use std::time::Instant;
+use tokio;
+use tokio::process::Command;
+use tokio::sync::mpsc;
 
-fn main() {
+#[derive(Debug, Clone)]
+enum InputDeviceType {
+    EVDEV,
+    GPIO,
+}
+
+#[derive(Debug, Clone)]
+struct InputChannelMessage {
+    device_type: InputDeviceType,
+    device: String,
+    id: String,
+}
+
+fn handle_input_get_action(conf: &Config, message: &InputChannelMessage) -> Option<String> {
+    match message.device_type {
+        InputDeviceType::EVDEV => {
+            if conf.input.contains_key(&message.device) {
+                if conf.input[&message.device].contains_key(&message.id) {
+                    let action = conf.input[&message.device][&message.id].clone();
+                    return Some(action);
+                } else {
+                    info!(
+			"Unable to handle message {:?} for input device {:?}. Message not configured",
+			message.id, message.device
+                    );
+                }
+            } else {
+                info!(
+                    "Unable to handle message {:?} for input device {:?}. Input device not in config",
+                    message.id, message.device
+		);
+            }
+        }
+        InputDeviceType::GPIO => {
+            info!("Got a GPIO message");
+            if conf.gpio.contains_key(&message.device) {
+                let message_id = &message.id.parse::<u32>().unwrap();
+                if conf.gpio[&message.device].contains_key(message_id) {
+                    let action = conf.gpio[&message.device][message_id].clone();
+                    return Some(action);
+                } else {
+                    info!(
+			"Unable to handle message {:?} for GPIO device {:?}. Message not configured",
+			message.id, message.device
+                    );
+                }
+            } else {
+                info!(
+                    "Unable to handle message {:?} for GPIO device {:?}. Input device not in config",
+                    message.id, message.device
+		);
+            }
+        }
+    }
+    None
+}
+
+/// increase the volume via alsa
+async fn volume_increase(alsa_control: &str) {
+    let _output = Command::new("amixer")
+        .args(&["set", alsa_control, "5%+"])
+        .output()
+        .await
+        .unwrap();
+    info!("Increased volume for control {} by 5%", alsa_control);
+}
+
+/// decrease the volume via alsa
+async fn volume_decrease(alsa_control: &str) {
+    let _output = Command::new("amixer")
+        .args(&["set", alsa_control, "5%-"])
+        .output()
+        .await
+        .unwrap();
+    info!("Decreased volume for control {} by 5%", alsa_control);
+}
+
+/// Handle incoming input events from the receiver channel
+async fn handle_input(
+    conf: &Config,
+    mut events_rx: mpsc::Receiver<InputChannelMessage>,
+    mut player: player::SpotifyPlayer,
+) {
+    info!("Input receiver started ...");
+    while let Some(message) = events_rx.recv().await {
+        debug!(
+            "Received some message from {:?} {:?}: {:?}",
+            message.device_type, message.device, message.id
+        );
+        let action = handle_input_get_action(&conf, &message);
+        match action {
+            Some(a) => {
+                info!("Found received action '{:?}' in '{:?}'", a, message.device);
+                match a.as_ref() {
+                    "VOLUME_INCREASE" => {
+                        volume_increase(&conf.alsa.control).await;
+                    }
+                    "VOLUME_DECREASE" => {
+                        volume_decrease(&conf.alsa.control).await;
+                    }
+                    "PAUSE" => {
+                        player.pause().await;
+                    }
+                    "RESUME" => {
+                        player.resume().await;
+                    }
+                    _ => {
+                        player.stop().await;
+                        player.play(String::from(a)).await;
+                    }
+                }
+            }
+            None => warn!(
+                "No action for message {:?} on device {:?}",
+                message.id, message.device
+            ),
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     info!("Starting soundkid ...");
 
@@ -32,163 +151,131 @@ fn main() {
     // get the configuration
     let conf = Config::new();
 
-    // handle evdev input
-    let (input_reader_tx, input_reader_rx): (Sender<(String, String)>, Receiver<(String, String)>) =
-        mpsc::channel();
+    // channel to receive events
+    let (events_tx, events_rx) = mpsc::channel(100);
+
+    // list of readers for all input devices
+    let mut readers = Vec::new();
     if !conf.input.is_empty() {
         for (input_device, _input_device_actions) in conf.input.clone() {
-            info!("Found config for input device {}", input_device);
-            let ir_tx = input_reader_tx.clone();
-            thread::spawn(|| {
-                let reader = reader::Input::new(input_device);
-                match reader {
-                    Some(r) => {
-                        r.handle_input(ir_tx);
-                    }
-                    _ => {
-                        panic!("Unable to create a input handler for the given input device description. Abort");
-                    }
+            let reader = reader::Input::new(&input_device);
+            match reader {
+                Some(r) => {
+                    debug!("Got input reader {:?}", r.device_desc);
+                    //let events = r.device.into_event_stream()?;
+                    readers.push(r);
+                    //event_handlers.push(events);
                 }
-            });
+                _ => {
+                    panic!(
+                        "Unable to create a reader for the given input device description. Abort"
+                    );
+                }
+            }
         }
     } else {
         info!("No input config found. Skipping input handling");
     }
 
-    // the player process
-    let mut child: Option<Child> = None;
+    for reader in readers {
+        let thread_events_tx = events_tx.clone();
+        tokio::task::spawn(async move {
+            let mut event = reader.device.into_event_stream().unwrap();
+            let mut input_str = String::new();
+            loop {
+                let ev = event.next_event().await.unwrap();
+                // only handle value 1 - otherwise we have double events
+                if ev.value() != 1 {
+                    continue;
+                }
+
+                match ev.kind() {
+                    InputEventKind::Key(Key::KEY_0) => input_str.push('0'),
+                    InputEventKind::Key(Key::KEY_1) => input_str.push('1'),
+                    InputEventKind::Key(Key::KEY_2) => input_str.push('2'),
+                    InputEventKind::Key(Key::KEY_3) => input_str.push('3'),
+                    InputEventKind::Key(Key::KEY_4) => input_str.push('4'),
+                    InputEventKind::Key(Key::KEY_5) => input_str.push('5'),
+                    InputEventKind::Key(Key::KEY_6) => input_str.push('6'),
+                    InputEventKind::Key(Key::KEY_7) => input_str.push('7'),
+                    InputEventKind::Key(Key::KEY_8) => input_str.push('8'),
+                    InputEventKind::Key(Key::KEY_9) => input_str.push('9'),
+                    InputEventKind::Key(Key::KEY_ENTER) => {
+                        if input_str.len() > 0 {
+                            let msg = InputChannelMessage {
+                                device_type: InputDeviceType::EVDEV,
+                                device: reader.device_desc.clone(),
+                                id: input_str.clone(),
+                            };
+                            debug!(
+                                "Input event on device {:?}: {:?}",
+                                reader.device_desc, input_str
+                            );
+                            thread_events_tx.send(msg).await.unwrap();
+                            input_str.clear();
+                        }
+                    }
+                    _ => println!("No match"),
+                };
+            }
+        });
+    }
 
     // handle GPIO input
     if !conf.gpio.is_empty() {
         for (gpio_device, gpio_device_actions) in conf.gpio.clone() {
             info!("Found config for GPIO device {}", gpio_device);
-            for (gpio_line, gpio_action) in gpio_device_actions {
+            for (gpio_line, _) in gpio_device_actions {
                 let dev = gpio_device.clone();
-                let alsa_control = conf.alsa.control.clone();
-                info!("Watching GPIO line {} on device {} now", gpio_line, dev);
-                thread::spawn(move || {
+                let thread_events_tx = events_tx.clone();
+                tokio::task::spawn(async move {
                     let mut chip = Chip::new(dev.clone()).unwrap();
-                    let input = chip.get_line(gpio_line).unwrap();
-                    let mut last_falling_event: Instant = Instant::now();
-                    for _event in input
-                        .events(
+                    let line = chip.get_line(gpio_line).unwrap();
+                    let mut events = AsyncLineEventHandle::new(
+                        line.events(
                             LineRequestFlags::INPUT,
-                            // NOTE: do we need to handle also RISING_EDGE?
+                            // NOTE: do we need to handle also RISING_EDGE (BOTH_EDGES)?
                             EventRequestFlags::FALLING_EDGE,
-                            "mirror-gpio",
+                            "gpioevents",
                         )
-                        .unwrap()
-                    {
-                        // very simple debounce method to not retrigger actions for bouncing buttons
-                        if last_falling_event.elapsed().as_millis() > 200 {
-                            // FIXME: DRY and PAUSE & RESUME are currently not supported
-                            if gpio_action == "VOLUME_INCREASE" {
-                                volume_increase(alsa_control.clone());
-                            } else if gpio_action == "VOLUME_DECREASE" {
-                                volume_decrease(alsa_control.clone());
+                        .unwrap(),
+                    )
+                    .unwrap();
+                    info!("Watching GPIO line {} on device {} now ...", gpio_line, dev);
+                    loop {
+                        match events.next().await {
+                            Some(event) => {
+                                let msg = InputChannelMessage {
+                                    device_type: InputDeviceType::GPIO,
+                                    device: dev.clone(),
+                                    id: line.offset().to_string(),
+                                };
+
+                                thread_events_tx.send(msg).await.unwrap();
+                                debug!(
+                                    "GPIO event on device {:?} {:?}: {:?}",
+                                    dev,
+                                    line,
+                                    event.unwrap()
+                                );
                             }
-                        } else {
-                            debug!("Not doing anything for GPIO falling event on dev {} line {} - 200 ms not passed since last falling event", dev, gpio_line);
-                        }
-                        last_falling_event = Instant::now();
+                            None => break,
+                        };
                     }
                 });
             }
         }
-    } else {
-        info!("No GPIO config found. Skipping GPIO handling");
     }
 
-    for (input_device_desc, action) in input_reader_rx {
-        if conf.input.contains_key(&input_device_desc) {
-            if conf.input[&input_device_desc].contains_key(&action) {
-                let action = conf.input[&input_device_desc][&action].clone();
-                info!(
-                    "Found received action '{:?}' in '{:?}'",
-                    action, input_device_desc
-                );
+    // the spotify player
+    let player =
+        player::SpotifyPlayer::new(conf.spotify.username.clone(), conf.spotify.password.clone())
+            .await;
 
-                if action == "PAUSE" {
-                    pause(&mut child);
-                } else if action == "RESUME" {
-                    resume(&mut child);
-                } else if action == "VOLUME_INCREASE" {
-                    volume_increase(conf.alsa.control.clone());
-                } else if action == "VOLUME_DECREASE" {
-                    volume_decrease(conf.alsa.control.clone());
-                } else {
-                    play(&mut child, &conf, &action);
-                }
-            } else {
-                info!(
-                    "Received an unknown action '{:?}' for input device {:?}",
-                    action, input_device_desc
-                );
-            }
-        } else {
-            info!("Received an unknown input device {:?}", input_device_desc)
-        }
-    }
-}
+    // play a startup sound
+    //player.play(String::from("https://open.spotify.com/track/0PC1HwzqaRghfqVQxqelr8?si=0f8c23b4a0fe472a")).await;
 
-/// pause the current child (soundkid-player) process
-fn pause(child: &mut Option<Child>) {
-    if let Some(x) = child {
-        info!("Pause process with PID {:?}", x.id());
-        signal::kill(Pid::from_raw(x.id() as i32), Signal::SIGTSTP).unwrap();
-    }
-}
+    tokio::join!(handle_input(&conf, events_rx, player));
 
-/// resume the current child (soundkid-player) process
-fn resume(child: &mut Option<Child>) {
-    if let Some(x) = child {
-        info!("Resume process with PID {:?}", x.id());
-        signal::kill(Pid::from_raw(x.id() as i32), Signal::SIGCONT).unwrap();
-    }
-}
-
-/// increase the volume via alsa
-fn volume_increase(alsa_control: String) {
-    let _output = Command::new("amixer")
-        .args(&["set", alsa_control.as_str(), "5%+"])
-        .output()
-        .expect("failed to increase volume via amixer");
-    info!("Increased volume for control {} by 5%", alsa_control);
-}
-
-/// increase the volume via alsa
-fn volume_decrease(alsa_control: String) {
-    let _output = Command::new("amixer")
-        .args(&["set", alsa_control.as_str(), "5%-"])
-        .output()
-        .expect("failed to decrease volume via amixer");
-    info!("Decreased volume for control {} by 5%", alsa_control);
-}
-
-fn play(child: &mut Option<Child>, conf: &Config, action: &String) {
-    if let Some(x) = child {
-        info!("Killing current player processs with PID: {}", x.id());
-        x.kill().unwrap();
-    }
-    //start a new child
-    // possible path to the soundkid-player binary (for debugging)
-    let paths = [
-        Path::new("./target/debug"),
-        Path::new("./target/release"),
-        Path::new("/usr/local/bin"),
-        Path::new("/usr/bin"),
-        Path::new("/bin"),
-    ];
-    let path_os_string = env::join_paths(paths.iter()).unwrap();
-    info!("Starting soundkid-player process for action {} ...", action);
-    *child = Some(
-        Command::new("soundkid-player")
-            // FIXME: do not hardcode the path
-            .env("PATH", path_os_string.into_string().unwrap())
-            .arg(conf.spotify.username.clone())
-            .arg(conf.spotify.password.clone())
-            .arg(action.clone())
-            .spawn()
-            .expect("Unable to spawn a child process"),
-    );
+    Ok(())
 }
