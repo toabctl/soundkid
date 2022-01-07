@@ -13,18 +13,7 @@ I started my own project instead of using Phoniebox to learn more about the
 
 ## Overview
 
-soundkid has 2 executables - `soundkid-player` and `soundkid`.
-
-`soundkid-player` can be used from the command line to just play something from spotify:
-
-```
-soundkid-player <spotify_username> <spotify_password> <spotify_id>
-```
-
-Using `soundkid-player` directly is mostly useful for debugging. Usually, `soundkid`
-handles everything.
-
-`soundkid` itself does read a configuration file from `~/.soundkid.conf` and waits for
+`soundkid` does read a configuration file from `~/.soundkid.conf` and waits for
 input events from the input device (eg. the RFID Reader) and then starts
 `soundkid-player` to play something.
 
@@ -78,12 +67,6 @@ Build the project with:
 
 ```
 cargo build
-```
-
-Running `soundkid-player` directly can be done with:
-
-```
-RUST_BACKTRACE=full RUST_LOG=debug cargo run --bin soundkid-player -- -
 ```
 
 Running `soundkid`:
