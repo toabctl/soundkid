@@ -127,95 +127,82 @@ async fn oauth_login(client_id: &str) -> Result<librespot_oauth::OAuthToken> {
         .map_err(|e| anyhow!("failed to obtain Spotify access token: {e}"))
 }
 
+/// Player state machine. `Idle` waits for the next command, `Playing`
+/// races track completion against incoming commands so a new card scan
+/// (or pause/resume/stop) takes effect immediately.
+enum State {
+    Idle,
+    Playing { queue: Vec<SpotifyUri>, idx: usize },
+}
+
 async fn player_task(session: Session, player: Arc<Player>, mut rx: Receiver<Command>) {
-    let mut queue: Vec<SpotifyUri> = Vec::new();
-    let mut idx: usize = 0;
-
+    let mut state = State::Idle;
     loop {
-        // Idle: wait for the next command.
-        if idx >= queue.len() {
-            match rx.recv().await {
-                Some(cmd) => match handle_idle(cmd, &session, &player, &mut queue, &mut idx).await {
-                    Ok(()) => {}
-                    Err(e) => warn!("player command failed: {e:#}"),
-                },
-                None => return, // sender dropped
-            }
-            continue;
-        }
-
-        // Active: load the next track and race its completion against new commands.
-        let track_uri = queue[idx].clone();
-        match Track::get(&session, &track_uri).await {
-            Ok(t) => info!("Playing track '{}' ({:?})", t.name, track_uri),
-            Err(e) => warn!("could not fetch metadata for {track_uri:?}: {e}"),
-        }
-        player.load(track_uri, true, 0);
-
-        tokio::select! {
-            _ = player.await_end_of_track() => {
-                idx += 1;
-            }
-            cmd = rx.recv() => match cmd {
-                Some(cmd) => match handle_active(cmd, &session, &player, &mut queue, &mut idx).await {
-                    Ok(()) => {}
-                    Err(e) => warn!("player command failed: {e:#}"),
-                },
+        state = match state {
+            State::Idle => match rx.recv().await {
+                Some(cmd) => apply_command(cmd, &session, &player, State::Idle).await,
                 None => return,
+            },
+            State::Playing { queue, idx } if idx >= queue.len() => State::Idle,
+            State::Playing { queue, idx } => {
+                let track_uri = queue[idx].clone();
+                match Track::get(&session, &track_uri).await {
+                    Ok(t) => info!("Playing track '{}' ({:?})", t.name, track_uri),
+                    Err(e) => warn!("could not fetch metadata for {track_uri:?}: {e}"),
+                }
+                player.load(track_uri, true, 0);
+                tokio::select! {
+                    _ = player.await_end_of_track() => {
+                        State::Playing { queue, idx: idx + 1 }
+                    }
+                    cmd = rx.recv() => match cmd {
+                        Some(cmd) => apply_command(
+                            cmd, &session, &player, State::Playing { queue, idx },
+                        ).await,
+                        None => return,
+                    }
+                }
             }
-        }
+        };
     }
 }
 
-async fn handle_idle(
+async fn apply_command(
     cmd: Command,
     session: &Session,
     player: &Arc<Player>,
-    queue: &mut Vec<SpotifyUri>,
-    idx: &mut usize,
-) -> Result<()> {
+    state: State,
+) -> State {
     match cmd {
         Command::Play(uri) => {
-            *queue = resolve_tracks(session, &uri).await?;
-            *idx = 0;
-            if queue.is_empty() {
-                warn!("URI {uri:?} resolved to no playable tracks");
+            if matches!(state, State::Playing { .. }) {
+                player.stop();
+            }
+            match resolve_tracks(session, &uri).await {
+                Ok(queue) if queue.is_empty() => {
+                    warn!("URI {uri:?} resolved to no playable tracks");
+                    State::Idle
+                }
+                Ok(queue) => State::Playing { queue, idx: 0 },
+                Err(e) => {
+                    warn!("could not resolve {uri:?}: {e:#}");
+                    State::Idle
+                }
             }
         }
-        Command::Pause | Command::Resume => {
-            // No active playback to pause/resume — ignore.
-        }
         Command::Stop => {
             player.stop();
-            queue.clear();
-            *idx = 0;
+            State::Idle
+        }
+        Command::Pause => {
+            player.pause();
+            state
+        }
+        Command::Resume => {
+            player.play();
+            state
         }
     }
-    Ok(())
-}
-
-async fn handle_active(
-    cmd: Command,
-    session: &Session,
-    player: &Arc<Player>,
-    queue: &mut Vec<SpotifyUri>,
-    idx: &mut usize,
-) -> Result<()> {
-    match cmd {
-        Command::Play(uri) => {
-            player.stop();
-            *queue = resolve_tracks(session, &uri).await?;
-            *idx = 0;
-        }
-        Command::Stop => {
-            player.stop();
-            queue.clear();
-            *idx = 0;
-        }
-        Command::Pause => player.pause(),
-        Command::Resume => player.play(),
-    }
-    Ok(())
 }
 
 /// Turn a Spotify URI or open.spotify.com URL into a flat list of track URIs.
