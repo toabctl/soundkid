@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use log::{debug, info};
 use soundkid::{
     config::Config,
     player::SpotifyPlayer,
@@ -9,6 +8,8 @@ use soundkid::{
 };
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
+use tracing::{debug, info};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Parser, Debug)]
 #[command(name = "soundkid", version, about = "Sound player for kids")]
@@ -16,7 +17,12 @@ struct Cli {}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_target(false)
+        .init();
     let _cli = Cli::parse();
     info!("Starting soundkid ...");
 

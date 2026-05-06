@@ -1,7 +1,7 @@
 use anyhow::Result;
-use log::{debug, info, warn};
 use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
+use tracing::{debug, info, warn};
 
 use crate::config::{Action, Config};
 use crate::input::{InputEvent, lookup_action};

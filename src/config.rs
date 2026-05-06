@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, anyhow};
-use log::{info, warn};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use tracing::{info, warn};
 
 fn default_alsa_control() -> String {
     "Master".to_string()

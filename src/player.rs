@@ -12,9 +12,9 @@ use librespot::playback::{
     player::Player,
 };
 use librespot_oauth::OAuthClientBuilder;
-use log::{info, warn};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
+use tracing::{info, warn};
 
 use crate::config::ConfigSpotify;
 

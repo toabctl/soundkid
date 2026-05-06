@@ -3,10 +3,10 @@ use evdev::{Device, EventSummary, KeyCode};
 use futures::stream::StreamExt;
 use glob::glob;
 use gpio_cdev::{AsyncLineEventHandle, Chip, EventRequestFlags, LineRequestFlags};
-use log::{debug, error, info, warn};
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use tokio::sync::mpsc::Sender;
+use tracing::{debug, error, info, warn};
 
 use crate::input::InputEvent;
 
