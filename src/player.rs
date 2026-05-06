@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use librespot::core::{
     SpotifyUri, authentication::Credentials, cache::Cache, config::SessionConfig, session::Session,
 };
-use librespot::metadata::{Album, Metadata, Playlist, Track};
+use librespot::metadata::{Album, Metadata, Playlist};
 use librespot::playback::{
     audio_backend,
     config::{AudioFormat, PlayerConfig},
@@ -146,10 +146,7 @@ async fn player_task(session: Session, player: Arc<Player>, mut rx: Receiver<Com
             State::Playing { queue, idx } if idx >= queue.len() => State::Idle,
             State::Playing { queue, idx } => {
                 let track_uri = queue[idx].clone();
-                match Track::get(&session, &track_uri).await {
-                    Ok(t) => info!("Playing track '{}' ({:?})", t.name, track_uri),
-                    Err(e) => warn!("could not fetch metadata for {track_uri:?}: {e}"),
-                }
+                info!("Playing {track_uri:?}");
                 player.load(track_uri, true, 0);
                 tokio::select! {
                     _ = player.await_end_of_track() => {
