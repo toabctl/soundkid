@@ -1,6 +1,4 @@
-/// The config module that handles the soundkid configuration
-extern crate dirs;
-
+use anyhow::{Context, Result, anyhow};
 use log::{info, warn};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -8,7 +6,13 @@ use std::fs;
 use std::path::PathBuf;
 
 fn default_alsa_control() -> String {
-    return "Master".to_string();
+    "Master".to_string()
+}
+
+fn default_cache_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/var/cache"))
+        .join("soundkid")
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -23,8 +27,13 @@ pub struct Config {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ConfigSpotify {
-    pub username: String,
-    pub password: String,
+    /// Directory used to persist credentials after the one-time OAuth login,
+    /// so subsequent starts can connect headlessly.
+    #[serde(default = "default_cache_dir")]
+    pub cache_dir: PathBuf,
+    /// Optional Spotify client_id. Defaults to librespot's built-in keymaster id.
+    #[serde(default)]
+    pub client_id: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -34,35 +43,30 @@ pub struct ConfigAlsa {
 }
 
 impl Config {
-    pub fn new() -> Config {
-        let mut config_home = PathBuf::new();
-        config_home.push(dirs::home_dir().unwrap());
-        config_home.push(".soundkid.conf");
+    pub fn load() -> Result<Self> {
+        let candidates = [
+            dirs::home_dir().map(|h| h.join(".soundkid.conf")),
+            Some(PathBuf::from("/etc/soundkid.conf")),
+        ];
 
-        let config_global = PathBuf::from("/etc/soundkid.conf");
-
-        for c in [&config_home, &config_global].iter() {
-            info!("Trying to read config file {:?}", c);
-            let yaml_content = fs::read_to_string(c.as_path());
-            let yaml_content = match yaml_content {
-                Ok(content) => content,
+        let mut last_err: Option<anyhow::Error> = None;
+        for path in candidates.into_iter().flatten() {
+            info!("Trying to read config file {path:?}");
+            match fs::read_to_string(&path) {
+                Ok(contents) => match serde_yaml_ng::from_str::<Config>(&contents) {
+                    Ok(cfg) => return Ok(cfg),
+                    Err(e) => {
+                        warn!("Unable to parse yaml from {path:?}: {e}");
+                        last_err = Some(anyhow!("parse error in {}: {e}", path.display()));
+                    }
+                },
                 Err(e) => {
-                    info!("Unable to read config file {:?}: {}", c, e.to_string());
-                    continue;
+                    info!("Unable to read config file {path:?}: {e}");
+                    last_err = Some(anyhow!("read error for {}: {e}", path.display()));
                 }
-            };
-            let yaml_config = serde_yaml::from_str(yaml_content.as_str());
-            match yaml_config {
-                Ok(config) => {
-                    return config;
-                }
-                Err(e) => {
-                    warn!("Unable to parse yaml from file {:?}: {}", c, e.to_string());
-                    continue;
-                }
-            };
+            }
         }
-
-        panic!("Unable to read any config file. ciao");
+        Err(last_err.unwrap_or_else(|| anyhow!("no config file found")))
+            .context("unable to load any soundkid config (~/.soundkid.conf or /etc/soundkid.conf)")
     }
 }

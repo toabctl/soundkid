@@ -1,26 +1,26 @@
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [package]
 name = "soundkid"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Thomas Bechtold <tbechtold@suse.com>"]
-edition = "2018"
+edition = "2024"
+rust-version = "1.85"
 readme = "README.md"
 
 [dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+env_logger = "0.11"
+evdev = { version = "0.13", features = ["tokio"] }
+futures = "0.3"
+glob = "0.3"
+gpio-cdev = { version = "0.6", features = ["async-tokio"] }
+librespot = { version = "0.8", default-features = false, features = ["native-tls"] }
+librespot-oauth = "0.8"
 log = "0.4"
-env_logger = "0.8"
-glob = "0.3.0"
-clap = "2.33.3"
-evdev = { version = "0.11", features = ['tokio'] }
-#evdev-rs = "0.3.1"
-librespot = "0.3.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_yaml = "0.8"
-tokio = { version = "1", features = ["full"]}
-http = "0.2.1"
-dirs = "3.0"
-gpio-cdev = { version = "0.5", features = ["async-tokio"]}
-futures = { version = "0.3"}
+serde = { version = "1", features = ["derive"] }
+serde_yaml_ng = "0.10"
+tokio = { version = "1", features = ["full"] }
 
 [package.metadata.deb]
 license-file = ["LICENSE"]

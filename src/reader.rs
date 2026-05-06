@@ -1,5 +1,5 @@
+use anyhow::{Result, anyhow};
 use evdev::Device;
-/// The reader module to get input events from the NFC card reader
 use glob::glob;
 use log::{debug, error, info};
 use std::os::unix::fs::FileTypeExt;
@@ -11,61 +11,52 @@ pub struct Input {
 }
 
 impl Input {
-    /// Check if the given device path seems to be ok
-    fn check_device_path(device_path: &str) -> bool {
-        let p = Path::new(device_path);
-        if p.exists() {
-            let meta = p.metadata().unwrap();
-            let file_type = meta.file_type();
-            if file_type.is_char_device() {
-                return true;
-            }
-        }
-        return false;
+    fn is_char_device(path: &str) -> bool {
+        Path::new(path)
+            .metadata()
+            .map(|m| m.file_type().is_char_device())
+            .unwrap_or(false)
     }
 
-    /// Try to find the given device
+    /// Resolve `device_desc` to a `/dev/input/event*` path.
+    /// Either it's already a path, or it's a device name that matches one.
     fn find_device_path(device_desc: &str) -> Option<String> {
-        // 1) just try the device string as path in the filesystem
-        if Input::check_device_path(device_desc) == true {
+        if Self::is_char_device(device_desc) {
             return Some(device_desc.to_string());
         }
 
-        // 2) try to find the by device name (looping over all /dev/input files)
-        for path in glob("/dev/input/event*").expect("Failed to read glob pattern for /dev/input") {
-            let path_str = path.unwrap().into_os_string().into_string().unwrap();
-            debug!("checking now device path {:?} ...", path_str);
-            let d = evdev::Device::open(path_str.clone()).unwrap();
-            // check the name against the given device description
-            if d.name().unwrap() == device_desc {
-                return Some(path_str);
+        for entry in glob("/dev/input/event*").expect("invalid glob") {
+            let path = match entry {
+                Ok(p) => p,
+                Err(e) => {
+                    debug!("glob entry error: {e}");
+                    continue;
+                }
+            };
+            let path_str = path.to_string_lossy().into_owned();
+            debug!("checking device path {path_str:?}");
+            match Device::open(&path_str) {
+                Ok(d) if d.name() == Some(device_desc) => return Some(path_str),
+                Ok(_) => {}
+                Err(e) => debug!("could not open {path_str:?}: {e}"),
             }
         }
         None
     }
 
-    pub fn new(device_desc: &str) -> Option<Input> {
-        // try first if the given string is a valid path
-        let device_path = Input::find_device_path(device_desc);
-        match device_path {
-            Some(dp) => {
-                let d = evdev::Device::open(dp.clone()).unwrap();
-                info!("Using device {:?}", dp);
-                let i = Input {
-                    device_desc: device_desc.to_string(),
-                    device: d,
-                };
-                return Some(i);
-            }
-            _ => {
-                error!(
-                    "Can not handle device description {:?}.
-                           Try a path in /dev/input/ or a device name
-                           (eg. list with 'evtest')",
-                    device_desc
-                );
-            }
-        }
-        None
+    pub fn new(device_desc: &str) -> Result<Self> {
+        let path = Self::find_device_path(device_desc).ok_or_else(|| {
+            error!(
+                "Cannot resolve device description {device_desc:?}. \
+                 Try a path in /dev/input/ or a device name (e.g. from `evtest`)."
+            );
+            anyhow!("input device {device_desc:?} not found")
+        })?;
+        let device = Device::open(&path)?;
+        info!("Using input device {path:?}");
+        Ok(Self {
+            device_desc: device_desc.to_string(),
+            device,
+        })
     }
 }

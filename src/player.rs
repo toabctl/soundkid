@@ -1,130 +1,255 @@
-use http::Uri;
-use librespot::core::authentication::Credentials;
-use librespot::core::config::SessionConfig;
-use librespot::core::session::Session;
-use librespot::core::spotify_id::SpotifyId;
-use librespot::metadata::{Album, Metadata, Playlist, Track};
-use librespot::playback::audio_backend;
-use librespot::playback::config::{AudioFormat, PlayerConfig};
-use librespot::playback::player::Player;
-use log::{info, warn};
+use std::sync::Arc;
 
-pub struct SpotifyPlayer {
-    session: Session,
-    player: Player,
+use anyhow::{Context, Result, anyhow, bail};
+use librespot::core::{
+    SpotifyUri, authentication::Credentials, cache::Cache, config::SessionConfig, session::Session,
+};
+use librespot::metadata::{Album, Metadata, Playlist, Track};
+use librespot::playback::{
+    audio_backend,
+    config::{AudioFormat, PlayerConfig},
+    mixer::NoOpVolume,
+    player::Player,
+};
+use librespot_oauth::OAuthClientBuilder;
+use log::{info, warn};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+
+use crate::config::ConfigSpotify;
+
+/// OAuth scopes mirroring what the upstream librespot binary requests.
+/// A subset would suffice for playback, but matching upstream avoids surprises.
+const OAUTH_SCOPES: &[&str] = &["streaming", "user-read-playback-state"];
+
+/// Commands sent from the input handler to the player task.
+#[derive(Debug, Clone)]
+enum Command {
+    Play(String),
+    Stop,
+    Pause,
+    Resume,
 }
 
-enum SpotifyUriType {
-    Track,
-    Album,
-    Playlist,
-    Unknown,
+/// Cheap, clonable handle to the background player task.
+#[derive(Clone)]
+pub struct SpotifyPlayer {
+    tx: UnboundedSender<Command>,
 }
 
 impl SpotifyPlayer {
-    pub async fn new(username: String, password: String) -> Self {
-        let session_config = SessionConfig::default();
-        let player_config = PlayerConfig::default();
-        let audio_format = AudioFormat::default();
-        let credentials = Credentials::with_password(username, password);
-        let backend = audio_backend::find(None).unwrap();
+    pub async fn new(spotify: &ConfigSpotify) -> Result<Self> {
+        let mut session_config = SessionConfig::default();
+        if let Some(client_id) = &spotify.client_id {
+            session_config.client_id = client_id.clone();
+        }
 
-        println!("Connecting ..");
-        let s = Session::connect(session_config, credentials, None)
-            .await
-            .unwrap();
+        let cache = Cache::new(Some(&spotify.cache_dir), None, None, None)
+            .with_context(|| format!("failed to open cache at {:?}", spotify.cache_dir))?;
 
-        let (p, _) = Player::new(player_config, s.clone(), None, move || {
-            backend(None, audio_format)
-        });
-
-        let sp = SpotifyPlayer {
-            session: s,
-            player: p,
+        let credentials = match cache.credentials() {
+            Some(c) => {
+                info!("Using cached credentials from {:?}", spotify.cache_dir);
+                c
+            }
+            None => {
+                info!("No cached credentials found, starting OAuth login");
+                Credentials::with_access_token(oauth_login(&session_config.client_id)?.access_token)
+            }
         };
-        return sp;
-    }
 
-    pub async fn play(&mut self, uri: String) {
-        let (spotify_uri, spotify_uri_type) = self.public_uri_to_spotify_id(uri.clone());
-        let spotify_id = SpotifyId::from_uri(spotify_uri.as_str()).unwrap();
+        info!("Connecting to Spotify ...");
+        let session = Session::new(session_config, Some(cache));
+        session
+            .connect(credentials, true)
+            .await
+            .context("failed to connect to Spotify")?;
+        info!("Connected.");
 
-        let mut tracks = Vec::new();
-
-        // fill the list of tracks to play
-        match spotify_uri_type {
-            SpotifyUriType::Album => {
-                tracks = Album::get(&self.session.clone(), spotify_id)
-                    .await
-                    .unwrap()
-                    .tracks
-            }
-            SpotifyUriType::Playlist => {
-                tracks = Playlist::get(&self.session.clone(), spotify_id)
-                    .await
-                    .unwrap()
-                    .tracks
-            }
-            SpotifyUriType::Track => tracks = vec![spotify_id],
-            _ => warn!("uri type not handled. no tracks will be played"),
-        }
-
-        for t in tracks {
-            let md_track = Track::get(&self.session.clone(), t).await.unwrap();
-            info!("Playing track '{}' from {:?} ...", md_track.name, t);
-            self.player.load(t, true, 0);
-            self.player.play();
-            //self.player.await_end_of_track().await;
-            info!("Playing spotify track {:?} finished", t);
-        }
-    }
-
-    pub async fn stop(&mut self) {
-        self.player.stop();
-        info!("Playing stopped ...");
-    }
-
-    pub async fn pause(&mut self) {
-        self.player.pause();
-        info!("Playing paused ...");
-    }
-
-    pub async fn resume(&mut self) {
-        self.player.play();
-        info!("Playing resumed ...");
-    }
-
-    fn public_uri_to_spotify_id(&self, uri: String) -> (String, SpotifyUriType) {
-        // 1) maybe it's already something that we understand
-        if uri.starts_with("spotify:album:") {
-            return (uri.clone(), SpotifyUriType::Album);
-        } else if uri.starts_with("spotify:track:") {
-            return (uri.clone(), SpotifyUriType::Track);
-        } else if uri.starts_with("spotify:playlist:") {
-            return (uri.clone(), SpotifyUriType::Playlist);
-        }
-
-        // 2) try to parse the uri
-        let uri_new = uri.parse::<Uri>().unwrap();
-        if uri_new.path().starts_with("/track/") {
-            let mut s = String::from("spotify:track:");
-            s.push_str(&uri_new.path().replace("/track/", ""));
-            return (s, SpotifyUriType::Track);
-        } else if uri_new.path().starts_with("/album/") {
-            let mut s = String::from("spotify:album:");
-            s.push_str(&uri_new.path().replace("/album/", ""));
-            return (s, SpotifyUriType::Album);
-        } else if uri_new.path().starts_with("/playlist/") {
-            let mut s = String::from("spotify:playlist:");
-            s.push_str(&uri_new.path().replace("/playlist/", ""));
-            return (s, SpotifyUriType::Playlist);
-        }
-
-        warn!(
-            "Did not handle uri '{}' with path '{}'",
-            uri,
-            uri_new.path()
+        let backend = audio_backend::find(None).ok_or_else(|| anyhow!("no audio backend"))?;
+        let player = Player::new(
+            PlayerConfig::default(),
+            session.clone(),
+            Box::new(NoOpVolume),
+            move || backend(None, AudioFormat::default()),
         );
-        return (uri, SpotifyUriType::Unknown);
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(player_task(session, player, rx));
+
+        Ok(Self { tx })
     }
+
+    pub fn play(&self, uri: String) {
+        let _ = self.tx.send(Command::Play(uri));
+    }
+
+    pub fn stop(&self) {
+        let _ = self.tx.send(Command::Stop);
+    }
+
+    pub fn pause(&self) {
+        let _ = self.tx.send(Command::Pause);
+    }
+
+    pub fn resume(&self) {
+        let _ = self.tx.send(Command::Resume);
+    }
+}
+
+fn oauth_login(client_id: &str) -> Result<librespot_oauth::OAuthToken> {
+    let client = OAuthClientBuilder::new(client_id, "http://127.0.0.1:8898/login", OAUTH_SCOPES.to_vec())
+        .open_in_browser()
+        .build()
+        .map_err(|e| anyhow!("failed to build OAuth client: {e}"))?;
+    client
+        .get_access_token()
+        .map_err(|e| anyhow!("failed to obtain Spotify access token: {e}"))
+}
+
+async fn player_task(
+    session: Session,
+    player: Arc<Player>,
+    mut rx: UnboundedReceiver<Command>,
+) {
+    let mut queue: Vec<SpotifyUri> = Vec::new();
+    let mut idx: usize = 0;
+
+    loop {
+        // Idle: wait for the next command.
+        if idx >= queue.len() {
+            match rx.recv().await {
+                Some(cmd) => match handle_idle(cmd, &session, &player, &mut queue, &mut idx).await {
+                    Ok(()) => {}
+                    Err(e) => warn!("player command failed: {e:#}"),
+                },
+                None => return, // sender dropped
+            }
+            continue;
+        }
+
+        // Active: load the next track and race its completion against new commands.
+        let track_uri = queue[idx].clone();
+        match Track::get(&session, &track_uri).await {
+            Ok(t) => info!("Playing track '{}' ({:?})", t.name, track_uri),
+            Err(e) => warn!("could not fetch metadata for {track_uri:?}: {e}"),
+        }
+        player.load(track_uri, true, 0);
+
+        tokio::select! {
+            _ = player.await_end_of_track() => {
+                idx += 1;
+            }
+            cmd = rx.recv() => match cmd {
+                Some(cmd) => match handle_active(cmd, &session, &player, &mut queue, &mut idx).await {
+                    Ok(()) => {}
+                    Err(e) => warn!("player command failed: {e:#}"),
+                },
+                None => return,
+            }
+        }
+    }
+}
+
+async fn handle_idle(
+    cmd: Command,
+    session: &Session,
+    player: &Arc<Player>,
+    queue: &mut Vec<SpotifyUri>,
+    idx: &mut usize,
+) -> Result<()> {
+    match cmd {
+        Command::Play(uri) => {
+            *queue = resolve_tracks(session, &uri).await?;
+            *idx = 0;
+            if queue.is_empty() {
+                warn!("URI {uri:?} resolved to no playable tracks");
+            }
+        }
+        Command::Pause | Command::Resume => {
+            // No active playback to pause/resume — ignore.
+        }
+        Command::Stop => {
+            player.stop();
+            queue.clear();
+            *idx = 0;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_active(
+    cmd: Command,
+    session: &Session,
+    player: &Arc<Player>,
+    queue: &mut Vec<SpotifyUri>,
+    idx: &mut usize,
+) -> Result<()> {
+    match cmd {
+        Command::Play(uri) => {
+            player.stop();
+            *queue = resolve_tracks(session, &uri).await?;
+            *idx = 0;
+        }
+        Command::Stop => {
+            player.stop();
+            queue.clear();
+            *idx = 0;
+        }
+        Command::Pause => player.pause(),
+        Command::Resume => player.play(),
+    }
+    Ok(())
+}
+
+/// Turn a Spotify URI or open.spotify.com URL into a flat list of track URIs.
+async fn resolve_tracks(session: &Session, raw: &str) -> Result<Vec<SpotifyUri>> {
+    let canonical = canonicalize_uri(raw)?;
+    let uri = SpotifyUri::from_uri(&canonical)
+        .map_err(|e| anyhow!("not a valid Spotify URI {raw:?}: {e}"))?;
+
+    Ok(match &uri {
+        SpotifyUri::Track { .. } => vec![uri],
+        SpotifyUri::Album { .. } => Album::get(session, &uri)
+            .await
+            .map_err(|e| anyhow!("Album::get failed: {e}"))?
+            .tracks()
+            .cloned()
+            .collect(),
+        SpotifyUri::Playlist { .. } => Playlist::get(session, &uri)
+            .await
+            .map_err(|e| anyhow!("Playlist::get failed: {e}"))?
+            .tracks()
+            .cloned()
+            .collect(),
+        other => {
+            bail!("URI type {} not supported for playback", other.item_type());
+        }
+    })
+}
+
+/// Accept either a `spotify:track:...` URI or a `https://open.spotify.com/<type>/<id>...` URL
+/// and return the canonical `spotify:<type>:<id>` form.
+fn canonicalize_uri(input: &str) -> Result<String> {
+    let trimmed = input.trim();
+    if trimmed.starts_with("spotify:") {
+        return Ok(trimmed.to_string());
+    }
+
+    // Strip scheme + host so we can split on '/'.
+    let path = trimmed
+        .strip_prefix("https://open.spotify.com/")
+        .or_else(|| trimmed.strip_prefix("http://open.spotify.com/"))
+        .ok_or_else(|| anyhow!("unrecognized Spotify URI/URL: {input:?}"))?;
+
+    // Drop any query string (`?si=...`) and trailing slashes.
+    let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    let mut parts = path.split('/');
+    let kind = parts
+        .next()
+        .ok_or_else(|| anyhow!("missing item type in {input:?}"))?;
+    let id = parts
+        .next()
+        .ok_or_else(|| anyhow!("missing item id in {input:?}"))?;
+
+    Ok(format!("spotify:{kind}:{id}"))
 }
