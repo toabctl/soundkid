@@ -5,7 +5,7 @@ use futures::stream::StreamExt;
 use gpio_cdev::{AsyncLineEventHandle, Chip, EventRequestFlags, LineRequestFlags};
 use log::{debug, info, warn};
 use soundkid::{
-    config::Config,
+    config::{Action, Config},
     player::SpotifyPlayer,
     reader::Input,
 };
@@ -29,19 +29,15 @@ struct InputMessage {
     id: String,
 }
 
-fn lookup_action<'a>(conf: &'a Config, msg: &InputMessage) -> Option<&'a str> {
+fn lookup_action<'a>(conf: &'a Config, msg: &InputMessage) -> Option<&'a Action> {
     match msg.device_type {
         InputDeviceType::Evdev => conf
             .input
             .get(&msg.device)
-            .and_then(|m| m.get(&msg.id))
-            .map(String::as_str),
+            .and_then(|m| m.get(&msg.id)),
         InputDeviceType::Gpio => {
             let line: u32 = msg.id.parse().ok()?;
-            conf.gpio
-                .get(&msg.device)
-                .and_then(|m| m.get(&line))
-                .map(String::as_str)
+            conf.gpio.get(&msg.device).and_then(|m| m.get(&line))
         }
     }
 }
@@ -77,11 +73,11 @@ async fn handle_input(
         };
         info!("Action {action:?} on device {:?}", msg.device);
         match action {
-            "VOLUME_INCREASE" => amixer(&conf.alsa.control, "5%+").await,
-            "VOLUME_DECREASE" => amixer(&conf.alsa.control, "5%-").await,
-            "PAUSE" => player.pause(),
-            "RESUME" => player.resume(),
-            other => player.play(other.to_string()),
+            Action::VolumeIncrease => amixer(&conf.alsa.control, "5%+").await,
+            Action::VolumeDecrease => amixer(&conf.alsa.control, "5%-").await,
+            Action::Pause => player.pause(),
+            Action::Resume => player.resume(),
+            Action::Play(uri) => player.play(uri.clone()),
         }
     }
 }

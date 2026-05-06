@@ -3,6 +3,7 @@ use log::{info, warn};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 fn default_alsa_control() -> String {
     "Master".to_string()
@@ -14,12 +15,57 @@ fn default_cache_dir() -> PathBuf {
         .join("soundkid")
 }
 
+/// What soundkid should do when a configured input fires. Parsed from the
+/// raw YAML string at config load, so a typo (`VOLUME_INCREASS`) is rejected
+/// at startup rather than silently misrouted as a Spotify URI later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum Action {
+    VolumeIncrease,
+    VolumeDecrease,
+    Pause,
+    Resume,
+    /// A Spotify URI (`spotify:track:...`) or an `open.spotify.com` URL.
+    /// Stored verbatim; the player is responsible for canonicalisation.
+    Play(String),
+}
+
+impl FromStr for Action {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "VOLUME_INCREASE" => Ok(Action::VolumeIncrease),
+            "VOLUME_DECREASE" => Ok(Action::VolumeDecrease),
+            "PAUSE" => Ok(Action::Pause),
+            "RESUME" => Ok(Action::Resume),
+            other if other.starts_with("spotify:")
+                || other.starts_with("https://open.spotify.com/")
+                || other.starts_with("http://open.spotify.com/") =>
+            {
+                Ok(Action::Play(other.to_string()))
+            }
+            other => Err(anyhow!(
+                "unknown action {other:?}: expected VOLUME_INCREASE, VOLUME_DECREASE, \
+                 PAUSE, RESUME, or a spotify: URI / open.spotify.com URL"
+            )),
+        }
+    }
+}
+
+impl TryFrom<String> for Action {
+    type Error = anyhow::Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Action::from_str(&value)
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     #[serde(default)]
-    pub gpio: HashMap<String, HashMap<u32, String>>,
+    pub gpio: HashMap<String, HashMap<u32, Action>>,
     #[serde(default)]
-    pub input: HashMap<String, HashMap<String, String>>,
+    pub input: HashMap<String, HashMap<String, Action>>,
     pub alsa: ConfigAlsa,
     pub spotify: ConfigSpotify,
 }
