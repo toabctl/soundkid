@@ -88,14 +88,28 @@ pub struct ConfigAlsa {
 }
 
 impl Config {
+    /// Load from the standard candidate paths: `~/.soundkid.conf` first, then
+    /// `/etc/soundkid.conf`. The first one that reads and parses successfully
+    /// wins; later candidates only become relevant if earlier ones fail.
     pub async fn load() -> Result<Self> {
-        let candidates = [
-            dirs::home_dir().map(|h| h.join(".soundkid.conf")),
-            Some(PathBuf::from("/etc/soundkid.conf")),
-        ];
+        let candidates = default_candidates();
+        Self::load_from(candidates)
+            .await
+            .context("unable to load any soundkid config (~/.soundkid.conf or /etc/soundkid.conf)")
+    }
 
+    /// Load from an explicit list of candidate paths, in order. The first
+    /// path that reads and parses cleanly wins; missing or unparseable files
+    /// are skipped. Errors from later candidates suppress errors from earlier
+    /// ones, so the last error is reported when nothing succeeds.
+    ///
+    /// Exposed mainly for tests; production callers should use [`Config::load`].
+    pub async fn load_from<I>(candidates: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
         let mut last_err: Option<anyhow::Error> = None;
-        for path in candidates.into_iter().flatten() {
+        for path in candidates {
             info!("Trying to read config file {path:?}");
             match tokio::fs::read_to_string(&path).await {
                 Ok(contents) => match serde_yaml_ng::from_str::<Config>(&contents) {
@@ -112,6 +126,14 @@ impl Config {
             }
         }
         Err(last_err.unwrap_or_else(|| anyhow!("no config file found")))
-            .context("unable to load any soundkid config (~/.soundkid.conf or /etc/soundkid.conf)")
     }
+}
+
+fn default_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        out.push(home.join(".soundkid.conf"));
+    }
+    out.push(PathBuf::from("/etc/soundkid.conf"));
+    out
 }
