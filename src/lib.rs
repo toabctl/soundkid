@@ -3,3 +3,4 @@ pub mod input;
 pub mod player;
 pub mod reader;
 pub mod runtime;
+pub mod uri;

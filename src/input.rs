@@ -27,18 +27,24 @@ mod tests {
         serde_yaml_ng::from_str(yaml).expect("test config must parse")
     }
 
-    const FULL: &str = r#"
-alsa: { control: "Master" }
-spotify: {}
+    const TRACK: &str = "6rqhFgbbKwnb9MLmUQDhG6";
+
+    fn full_yaml() -> String {
+        format!(
+            r#"
+alsa: {{ control: "Master" }}
+spotify: {{}}
 input:
   /dev/input/event0:
-    "12345": "spotify:track:abc"
+    "12345": "spotify:track:{TRACK}"
     "VOL_UP_CARD": "VOLUME_INCREASE"
 gpio:
   /dev/gpiochip0:
     17: "PAUSE"
     27: "RESUME"
-"#;
+"#
+        )
+    }
 
     fn evdev(device: &str, scanned: &str) -> InputEvent {
         InputEvent::Evdev {
@@ -56,10 +62,10 @@ gpio:
 
     #[test]
     fn evdev_match_returns_action() {
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(
             lookup_action(&c, &evdev("/dev/input/event0", "12345")),
-            Some(&Action::Play("spotify:track:abc".into()))
+            Some(&Action::Play(format!("spotify:track:{TRACK}")))
         );
         assert_eq!(
             lookup_action(&c, &evdev("/dev/input/event0", "VOL_UP_CARD")),
@@ -69,7 +75,7 @@ gpio:
 
     #[test]
     fn evdev_unknown_device_returns_none() {
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(
             lookup_action(&c, &evdev("/dev/input/event99", "12345")),
             None
@@ -78,7 +84,7 @@ gpio:
 
     #[test]
     fn evdev_unknown_scanned_returns_none() {
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(
             lookup_action(&c, &evdev("/dev/input/event0", "99999")),
             None
@@ -87,7 +93,7 @@ gpio:
 
     #[test]
     fn gpio_match_returns_action() {
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(
             lookup_action(&c, &gpio("/dev/gpiochip0", 17)),
             Some(&Action::Pause)
@@ -100,26 +106,26 @@ gpio:
 
     #[test]
     fn gpio_unknown_line_returns_none() {
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(lookup_action(&c, &gpio("/dev/gpiochip0", 42)), None);
     }
 
     #[test]
     fn gpio_unknown_chip_returns_none() {
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(lookup_action(&c, &gpio("/dev/gpiochip9", 17)), None);
     }
 
     #[test]
     fn evdev_event_does_not_hit_gpio_mapping() {
         // gpio chip path used as evdev device must not cross-match.
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(lookup_action(&c, &evdev("/dev/gpiochip0", "17")), None);
     }
 
     #[test]
     fn gpio_event_does_not_hit_evdev_mapping() {
-        let c = config(FULL);
+        let c = config(&full_yaml());
         assert_eq!(lookup_action(&c, &gpio("/dev/input/event0", 12345)), None);
     }
 

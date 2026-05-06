@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::{info, warn};
 
+use crate::uri::canonicalize_uri;
+
 fn default_alsa_control() -> String {
     "Master".to_string()
 }
@@ -25,8 +27,9 @@ pub enum Action {
     VolumeDecrease,
     Pause,
     Resume,
-    /// A Spotify URI (`spotify:track:...`) or an `open.spotify.com` URL.
-    /// Stored verbatim; the player is responsible for canonicalisation.
+    /// A Spotify URI in canonical `spotify:<type>:<id>` form. URLs of the
+    /// form `https://open.spotify.com/...` are normalised to this shape at
+    /// parse time, so by the time the player sees this it is already valid.
     Play(String),
 }
 
@@ -44,7 +47,7 @@ impl FromStr for Action {
                     || other.starts_with("https://open.spotify.com/")
                     || other.starts_with("http://open.spotify.com/") =>
             {
-                Ok(Action::Play(other.to_string()))
+                Ok(Action::Play(canonicalize_uri(other)?))
             }
             other => Err(anyhow!(
                 "unknown action {other:?}: expected VOLUME_INCREASE, VOLUME_DECREASE, \
@@ -169,24 +172,53 @@ mod tests {
         assert_eq!(Action::from_str("RESUME").unwrap(), Action::Resume);
     }
 
+    // Real-shape IDs (22 base62 chars). librespot validates length strictly.
+    const TRACK_ID: &str = "6rqhFgbbKwnb9MLmUQDhG6";
+    const ALBUM_ID: &str = "7LQhG0xSDjFiKJnziyB3Zj";
+
     #[test]
-    fn action_play_spotify_uri() {
+    fn action_play_spotify_uri_passthrough() {
+        let s = format!("spotify:track:{TRACK_ID}");
+        assert_eq!(Action::from_str(&s).unwrap(), Action::Play(s));
+    }
+
+    #[test]
+    fn action_play_https_url_canonicalised() {
+        let url = format!("https://open.spotify.com/album/{ALBUM_ID}");
         assert_eq!(
-            Action::from_str("spotify:track:6rqhFgbbKwnb9MLmUQDhG6").unwrap(),
-            Action::Play("spotify:track:6rqhFgbbKwnb9MLmUQDhG6".into())
+            Action::from_str(&url).unwrap(),
+            Action::Play(format!("spotify:album:{ALBUM_ID}"))
         );
     }
 
     #[test]
-    fn action_play_https_url() {
-        let url = "https://open.spotify.com/album/7LQhG0xSDjFiKJnziyB3Zj";
-        assert_eq!(Action::from_str(url).unwrap(), Action::Play(url.into()));
+    fn action_play_http_url_canonicalised() {
+        let url = format!("http://open.spotify.com/track/{TRACK_ID}");
+        assert_eq!(
+            Action::from_str(&url).unwrap(),
+            Action::Play(format!("spotify:track:{TRACK_ID}"))
+        );
     }
 
     #[test]
-    fn action_play_http_url() {
-        let url = "http://open.spotify.com/track/abc";
-        assert_eq!(Action::from_str(url).unwrap(), Action::Play(url.into()));
+    fn action_play_url_with_query_string_canonicalised() {
+        let url = format!("https://open.spotify.com/album/{ALBUM_ID}?si=xyz");
+        assert_eq!(
+            Action::from_str(&url).unwrap(),
+            Action::Play(format!("spotify:album:{ALBUM_ID}"))
+        );
+    }
+
+    #[test]
+    fn action_play_invalid_spotify_id_rejected_at_parse() {
+        // Short/invalid id is rejected by canonicalize_uri at config load,
+        // not at first card scan.
+        assert!(Action::from_str("spotify:track:abc").is_err());
+    }
+
+    #[test]
+    fn action_play_invalid_url_id_rejected_at_parse() {
+        assert!(Action::from_str("https://open.spotify.com/track/abc").is_err());
     }
 
     #[test]
@@ -220,13 +252,9 @@ mod tests {
     }
 
     #[test]
-    fn action_spotify_prefix_passthrough() {
-        // We deliberately don't validate the body of a `spotify:` URI here;
-        // canonicalisation lives in the player. Confirm that contract.
-        assert_eq!(
-            Action::from_str("spotify:nonsense").unwrap(),
-            Action::Play("spotify:nonsense".into())
-        );
+    fn action_spotify_garbage_after_prefix_rejected() {
+        // Body validation happens at config load via SpotifyUri::from_uri.
+        assert!(Action::from_str("spotify:nonsense").is_err());
     }
 
     // ----- Config parsing ------------------------------------------------
@@ -252,26 +280,29 @@ spotify: {}
 
     #[test]
     fn config_full_parses() {
-        let cfg = parse(
+        let yaml = format!(
             r#"
-alsa: { control: "SoftMaster" }
+alsa: {{ control: "SoftMaster" }}
 spotify:
   client_id: my-id
 input:
   /dev/input/event0:
-    "12345": "spotify:track:abc"
+    "12345": "spotify:track:{TRACK_ID}"
     "VOL": "VOLUME_INCREASE"
 gpio:
   /dev/gpiochip0:
     17: PAUSE
     27: RESUME
-"#,
-        )
-        .unwrap();
+"#
+        );
+        let cfg = parse(&yaml).unwrap();
         assert_eq!(cfg.alsa.control, "SoftMaster");
         assert_eq!(cfg.spotify.client_id.as_deref(), Some("my-id"));
         let evdev = &cfg.input["/dev/input/event0"];
-        assert_eq!(evdev["12345"], Action::Play("spotify:track:abc".into()));
+        assert_eq!(
+            evdev["12345"],
+            Action::Play(format!("spotify:track:{TRACK_ID}"))
+        );
         assert_eq!(evdev["VOL"], Action::VolumeIncrease);
         let gpio = &cfg.gpio["/dev/gpiochip0"];
         assert_eq!(gpio[&17u32], Action::Pause);
