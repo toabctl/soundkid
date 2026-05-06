@@ -254,3 +254,158 @@ fn canonicalize_uri(input: &str) -> Result<String> {
 
     Ok(format!("spotify:{kind}:{id}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::canonicalize_uri;
+
+    fn ok(input: &str, expected: &str) {
+        assert_eq!(canonicalize_uri(input).unwrap(), expected, "input={input:?}");
+    }
+
+    fn err(input: &str) {
+        assert!(canonicalize_uri(input).is_err(), "expected err for {input:?}");
+    }
+
+    // ----- spotify: passthrough -----------------------------------------
+
+    #[test]
+    fn spotify_track_passthrough() {
+        ok("spotify:track:abc", "spotify:track:abc");
+    }
+
+    #[test]
+    fn spotify_album_passthrough() {
+        ok("spotify:album:xyz", "spotify:album:xyz");
+    }
+
+    #[test]
+    fn spotify_playlist_passthrough() {
+        ok("spotify:playlist:42", "spotify:playlist:42");
+    }
+
+    #[test]
+    fn spotify_named_playlist_passthrough() {
+        // The `spotify:user:<user>:playlist:<id>` form is preserved verbatim;
+        // SpotifyUri::from_uri handles the named variant downstream.
+        ok(
+            "spotify:user:spotify:playlist:37i9dQZF1DWSw8liJZcPOI",
+            "spotify:user:spotify:playlist:37i9dQZF1DWSw8liJZcPOI",
+        );
+    }
+
+    #[test]
+    fn spotify_passthrough_is_not_validated() {
+        // Documented behaviour: we hand off validation to SpotifyUri::from_uri.
+        ok("spotify:nonsense", "spotify:nonsense");
+    }
+
+    // ----- https URL conversion -----------------------------------------
+
+    #[test]
+    fn https_track_converts() {
+        ok("https://open.spotify.com/track/abc", "spotify:track:abc");
+    }
+
+    #[test]
+    fn https_album_converts() {
+        ok("https://open.spotify.com/album/xyz", "spotify:album:xyz");
+    }
+
+    #[test]
+    fn https_playlist_converts() {
+        ok("https://open.spotify.com/playlist/p1", "spotify:playlist:p1");
+    }
+
+    #[test]
+    fn http_url_also_converts() {
+        ok("http://open.spotify.com/track/abc", "spotify:track:abc");
+    }
+
+    #[test]
+    fn url_query_string_stripped() {
+        ok(
+            "https://open.spotify.com/track/abc?si=xyz",
+            "spotify:track:abc",
+        );
+    }
+
+    #[test]
+    fn url_query_with_multiple_params_stripped() {
+        ok(
+            "https://open.spotify.com/album/xyz?si=foo&utm=bar",
+            "spotify:album:xyz",
+        );
+    }
+
+    #[test]
+    fn url_trailing_slash_stripped() {
+        ok("https://open.spotify.com/track/abc/", "spotify:track:abc");
+    }
+
+    #[test]
+    fn url_trailing_slash_with_query_stripped() {
+        ok(
+            "https://open.spotify.com/track/abc/?si=z",
+            "spotify:track:abc",
+        );
+    }
+
+    #[test]
+    fn leading_and_trailing_whitespace_trimmed() {
+        ok(
+            "  https://open.spotify.com/track/abc  ",
+            "spotify:track:abc",
+        );
+    }
+
+    #[test]
+    fn whitespace_around_spotify_uri_trimmed() {
+        ok("  spotify:track:abc  ", "spotify:track:abc");
+    }
+
+    // ----- error cases --------------------------------------------------
+
+    #[test]
+    fn empty_string_errors() {
+        err("");
+    }
+
+    #[test]
+    fn whitespace_only_errors() {
+        err("   ");
+    }
+
+    #[test]
+    fn random_garbage_errors() {
+        err("not a uri at all");
+    }
+
+    #[test]
+    fn unrelated_https_url_errors() {
+        err("https://example.com/track/abc");
+    }
+
+    #[test]
+    fn open_spotify_root_errors() {
+        // No type or id.
+        err("https://open.spotify.com/");
+    }
+
+    #[test]
+    fn open_spotify_only_type_errors() {
+        // No id after the type.
+        err("https://open.spotify.com/track");
+    }
+
+    #[test]
+    fn open_spotify_type_with_only_slash_errors() {
+        // After trim_end_matches('/') and split, kind="track" but id is missing.
+        err("https://open.spotify.com/track/");
+    }
+
+    #[test]
+    fn ftp_url_errors() {
+        err("ftp://open.spotify.com/track/abc");
+    }
+}

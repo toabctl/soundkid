@@ -175,3 +175,39 @@ pub fn spawn_gpio_reader(
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Input;
+    use std::fs::File;
+    use tempfile::tempdir;
+
+    #[test]
+    fn dev_null_is_a_char_device() {
+        // /dev/null is universally a character device on Linux.
+        assert!(Input::is_char_device("/dev/null"));
+    }
+
+    #[test]
+    fn regular_file_is_not_a_char_device() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("regular");
+        File::create(&path).unwrap();
+        assert!(!Input::is_char_device(path.to_str().unwrap()));
+    }
+
+    #[test]
+    fn nonexistent_path_is_not_a_char_device() {
+        assert!(!Input::is_char_device("/this/does/not/exist/anywhere"));
+    }
+
+    #[test]
+    fn empty_string_is_not_a_char_device() {
+        assert!(!Input::is_char_device(""));
+    }
+
+    #[test]
+    fn directory_is_not_a_char_device() {
+        assert!(!Input::is_char_device("/tmp"));
+    }
+}
