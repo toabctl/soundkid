@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, anyhow};
 use evdev::{Device, EventSummary, KeyCode};
 use futures::stream::StreamExt;
-use glob::glob;
 use gpio_cdev::{AsyncLineEventHandle, Chip, EventRequestFlags, LineRequestFlags};
+use std::fs;
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use tokio::sync::mpsc::Sender;
@@ -30,15 +30,20 @@ impl Input {
             return Some(device_desc.to_string());
         }
 
-        for entry in glob("/dev/input/event*").expect("invalid glob") {
-            let path = match entry {
-                Ok(p) => p,
-                Err(e) => {
-                    debug!("glob entry error: {e}");
-                    continue;
-                }
-            };
-            let path_str = path.to_string_lossy().into_owned();
+        let entries = match fs::read_dir("/dev/input") {
+            Ok(rd) => rd,
+            Err(e) => {
+                debug!("could not read /dev/input: {e}");
+                return None;
+            }
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if !name.starts_with("event") {
+                continue;
+            }
+            let path_str = entry.path().to_string_lossy().into_owned();
             debug!("checking device path {path_str:?}");
             match Device::open(&path_str) {
                 Ok(d) if d.name() == Some(device_desc) => return Some(path_str),
