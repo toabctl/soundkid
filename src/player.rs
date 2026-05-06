@@ -14,6 +14,7 @@ use librespot::playback::{
 use librespot_oauth::OAuthClientBuilder;
 use log::{info, warn};
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::task::JoinHandle;
 
 use crate::config::ConfigSpotify;
 
@@ -42,7 +43,12 @@ pub struct SpotifyPlayer {
 }
 
 impl SpotifyPlayer {
-    pub async fn new(spotify: &ConfigSpotify) -> Result<Self> {
+    /// Connect to Spotify and spawn the background player task.
+    ///
+    /// Returns a clonable `SpotifyPlayer` handle for sending commands and the
+    /// `JoinHandle` of the background task. Callers should watch the handle so
+    /// that a panic or unexpected return takes down the process.
+    pub async fn new(spotify: &ConfigSpotify) -> Result<(Self, JoinHandle<()>)> {
         let mut session_config = SessionConfig::default();
         if let Some(client_id) = &spotify.client_id {
             session_config.client_id = client_id.clone();
@@ -81,9 +87,9 @@ impl SpotifyPlayer {
         );
 
         let (tx, rx) = mpsc::channel(COMMAND_QUEUE_DEPTH);
-        tokio::spawn(player_task(session, player, rx));
+        let join = tokio::spawn(player_task(session, player, rx));
 
-        Ok(Self { tx })
+        Ok((Self { tx }, join))
     }
 
     pub async fn play(&self, uri: String) -> Result<()> {

@@ -204,9 +204,15 @@ async fn main() -> Result<()> {
         }
     }
 
-    let player = SpotifyPlayer::new(&conf.spotify)
+    let (player, mut player_join) = SpotifyPlayer::new(&conf.spotify)
         .await
         .context("setting up Spotify player")?;
 
-    handle_input(conf, events_rx, player).await
+    tokio::select! {
+        result = handle_input(conf, events_rx, player) => result,
+        join = &mut player_join => match join {
+            Ok(()) => Err(anyhow::anyhow!("player task exited unexpectedly")),
+            Err(e) => Err(anyhow::anyhow!("player task panicked: {e}")),
+        },
+    }
 }
