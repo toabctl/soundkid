@@ -13,7 +13,7 @@ use librespot::playback::{
 };
 use librespot_oauth::OAuthClientBuilder;
 use log::{info, warn};
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::config::ConfigSpotify;
 
@@ -30,10 +30,15 @@ enum Command {
     Resume,
 }
 
+/// Bounded queue depth: in normal operation we never exceed one or two
+/// in-flight commands, so this is generous. A full channel means the player
+/// task is wedged, and `send().await` will park the input loop until it isn't.
+const COMMAND_QUEUE_DEPTH: usize = 8;
+
 /// Cheap, clonable handle to the background player task.
 #[derive(Clone)]
 pub struct SpotifyPlayer {
-    tx: UnboundedSender<Command>,
+    tx: Sender<Command>,
 }
 
 impl SpotifyPlayer {
@@ -75,26 +80,33 @@ impl SpotifyPlayer {
             move || backend(None, AudioFormat::default()),
         );
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(COMMAND_QUEUE_DEPTH);
         tokio::spawn(player_task(session, player, rx));
 
         Ok(Self { tx })
     }
 
-    pub fn play(&self, uri: String) {
-        let _ = self.tx.send(Command::Play(uri));
+    pub async fn play(&self, uri: String) -> Result<()> {
+        self.send(Command::Play(uri)).await
     }
 
-    pub fn stop(&self) {
-        let _ = self.tx.send(Command::Stop);
+    pub async fn stop(&self) -> Result<()> {
+        self.send(Command::Stop).await
     }
 
-    pub fn pause(&self) {
-        let _ = self.tx.send(Command::Pause);
+    pub async fn pause(&self) -> Result<()> {
+        self.send(Command::Pause).await
     }
 
-    pub fn resume(&self) {
-        let _ = self.tx.send(Command::Resume);
+    pub async fn resume(&self) -> Result<()> {
+        self.send(Command::Resume).await
+    }
+
+    async fn send(&self, cmd: Command) -> Result<()> {
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|_| anyhow!("player task is no longer running"))
     }
 }
 
@@ -109,11 +121,7 @@ async fn oauth_login(client_id: &str) -> Result<librespot_oauth::OAuthToken> {
         .map_err(|e| anyhow!("failed to obtain Spotify access token: {e}"))
 }
 
-async fn player_task(
-    session: Session,
-    player: Arc<Player>,
-    mut rx: UnboundedReceiver<Command>,
-) {
+async fn player_task(session: Session, player: Arc<Player>, mut rx: Receiver<Command>) {
     let mut queue: Vec<SpotifyUri> = Vec::new();
     let mut idx: usize = 0;
 

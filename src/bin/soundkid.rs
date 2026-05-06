@@ -46,7 +46,7 @@ async fn handle_input(
     conf: Config,
     mut events_rx: mpsc::Receiver<InputEvent>,
     player: SpotifyPlayer,
-) {
+) -> Result<()> {
     info!("Input receiver started");
     while let Some(event) = events_rx.recv().await {
         debug!("Received {event:?}");
@@ -58,11 +58,12 @@ async fn handle_input(
         match action {
             Action::VolumeIncrease => amixer(&conf.alsa.control, "5%+").await,
             Action::VolumeDecrease => amixer(&conf.alsa.control, "5%-").await,
-            Action::Pause => player.pause(),
-            Action::Resume => player.resume(),
-            Action::Play(uri) => player.play(uri.clone()),
+            Action::Pause => player.pause().await?,
+            Action::Resume => player.resume().await?,
+            Action::Play(uri) => player.play(uri.clone()).await?,
         }
     }
+    Ok(())
 }
 
 fn spawn_evdev_reader(reader: Input, tx: mpsc::Sender<InputEvent>) {
@@ -207,6 +208,5 @@ async fn main() -> Result<()> {
         .await
         .context("setting up Spotify player")?;
 
-    handle_input(conf, events_rx, player).await;
-    Ok(())
+    handle_input(conf, events_rx, player).await
 }
