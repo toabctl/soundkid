@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use soundkid::{
     config::Config,
-    player::SpotifyPlayer,
+    player::{PlayerControl, SpotifyPlayer},
     reader::{Input, setup_gpio_line, spawn_evdev_reader, spawn_gpio_reader},
     runtime::handle_input,
 };

@@ -36,10 +36,38 @@ enum Command {
 /// task is wedged, and `send().await` will park the input loop until it isn't.
 const COMMAND_QUEUE_DEPTH: usize = 8;
 
+/// The contract the dispatch loop relies on. Production uses `SpotifyPlayer`;
+/// tests substitute a fake. `Send + Sync + 'static` is what `tokio::spawn`
+/// demands of anything captured by a spawned task.
+pub trait PlayerControl: Clone + Send + Sync + 'static {
+    fn play(&self, uri: String) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn stop(&self) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn pause(&self) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn resume(&self) -> impl std::future::Future<Output = Result<()>> + Send;
+}
+
 /// Cheap, clonable handle to the background player task.
 #[derive(Clone)]
 pub struct SpotifyPlayer {
     tx: Sender<Command>,
+}
+
+impl PlayerControl for SpotifyPlayer {
+    async fn play(&self, uri: String) -> Result<()> {
+        self.send(Command::Play(uri)).await
+    }
+
+    async fn stop(&self) -> Result<()> {
+        self.send(Command::Stop).await
+    }
+
+    async fn pause(&self) -> Result<()> {
+        self.send(Command::Pause).await
+    }
+
+    async fn resume(&self) -> Result<()> {
+        self.send(Command::Resume).await
+    }
 }
 
 impl SpotifyPlayer {
@@ -90,22 +118,6 @@ impl SpotifyPlayer {
         let join = tokio::spawn(player_task(session, player, rx));
 
         Ok((Self { tx }, join))
-    }
-
-    pub async fn play(&self, uri: String) -> Result<()> {
-        self.send(Command::Play(uri)).await
-    }
-
-    pub async fn stop(&self) -> Result<()> {
-        self.send(Command::Stop).await
-    }
-
-    pub async fn pause(&self) -> Result<()> {
-        self.send(Command::Pause).await
-    }
-
-    pub async fn resume(&self) -> Result<()> {
-        self.send(Command::Resume).await
     }
 
     async fn send(&self, cmd: Command) -> Result<()> {

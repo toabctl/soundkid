@@ -5,17 +5,19 @@ use tracing::{debug, info, warn};
 
 use crate::config::{Action, Config};
 use crate::input::{InputEvent, lookup_action};
-use crate::player::SpotifyPlayer;
+use crate::player::PlayerControl;
 
 /// Drive the dispatch loop: pull events off the channel, look up their
 /// configured action, and invoke the player or amixer accordingly.
 ///
 /// Returns when the channel closes (all senders dropped) or when a player
 /// command fails — typically because the player task has died.
-pub async fn handle_input(
+///
+/// Generic over `PlayerControl` so tests can substitute a fake.
+pub async fn handle_input<P: PlayerControl>(
     conf: Config,
     mut events_rx: Receiver<InputEvent>,
-    player: SpotifyPlayer,
+    player: P,
 ) -> Result<()> {
     info!("Input receiver started");
     while let Some(event) = events_rx.recv().await {
