@@ -123,40 +123,35 @@ fn spawn_evdev_reader(reader: Input, tx: mpsc::Sender<InputEvent>) {
     });
 }
 
-fn spawn_gpio_reader(chip_path: String, line: u32, tx: mpsc::Sender<InputEvent>) {
-    tokio::spawn(async move {
-        let mut chip = match Chip::new(&chip_path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("could not open GPIO chip {chip_path:?}: {e}");
-                return;
-            }
-        };
-        let chip_line = match chip.get_line(line) {
-            Ok(l) => l,
-            Err(e) => {
-                warn!("could not get GPIO line {line} on {chip_path:?}: {e}");
-                return;
-            }
-        };
-        let events = match chip_line.events(
+/// Open a GPIO line and return an async event handle ready to be consumed.
+///
+/// All the failure-prone setup (chip open, line lookup, event subscription,
+/// AsyncFd registration) happens here so that callers can fail fast at startup
+/// rather than discovering broken config inside a spawned task.
+fn setup_gpio_line(chip_path: &str, line: u32) -> Result<AsyncLineEventHandle> {
+    let mut chip =
+        Chip::new(chip_path).with_context(|| format!("opening GPIO chip {chip_path:?}"))?;
+    let chip_line = chip
+        .get_line(line)
+        .with_context(|| format!("getting GPIO line {line} on {chip_path:?}"))?;
+    let events = chip_line
+        .events(
             LineRequestFlags::INPUT,
             EventRequestFlags::FALLING_EDGE,
             "soundkid",
-        ) {
-            Ok(e) => e,
-            Err(e) => {
-                warn!("could not request events on GPIO {chip_path:?}/{line}: {e}");
-                return;
-            }
-        };
-        let mut events = match AsyncLineEventHandle::new(events) {
-            Ok(e) => e,
-            Err(e) => {
-                warn!("could not wrap GPIO events as async on {chip_path:?}/{line}: {e}");
-                return;
-            }
-        };
+        )
+        .with_context(|| format!("requesting events on GPIO {chip_path:?}/{line}"))?;
+    AsyncLineEventHandle::new(events)
+        .with_context(|| format!("registering async GPIO handle on {chip_path:?}/{line}"))
+}
+
+fn spawn_gpio_reader(
+    chip_path: String,
+    line: u32,
+    mut events: AsyncLineEventHandle,
+    tx: mpsc::Sender<InputEvent>,
+) {
+    tokio::spawn(async move {
         info!("Watching GPIO line {line} on {chip_path}");
         while let Some(event) = events.next().await {
             match event {
@@ -201,7 +196,10 @@ async fn main() -> Result<()> {
     for (device, lines) in conf.gpio.clone() {
         info!("Found config for GPIO device {device}");
         for line in lines.keys() {
-            spawn_gpio_reader(device.clone(), *line, events_tx.clone());
+            let events = setup_gpio_line(&device, *line).with_context(|| {
+                format!("setting up GPIO {device:?}/{line} from config")
+            })?;
+            spawn_gpio_reader(device.clone(), *line, events, events_tx.clone());
         }
     }
 
