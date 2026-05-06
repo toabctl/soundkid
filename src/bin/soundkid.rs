@@ -10,6 +10,7 @@ use soundkid::{
     reader::Input,
 };
 use tokio::process::Command;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 #[derive(Parser, Debug)]
@@ -208,11 +209,27 @@ async fn main() -> Result<()> {
         .await
         .context("setting up Spotify player")?;
 
-    tokio::select! {
-        result = handle_input(conf, events_rx, player) => result,
+    let mut sigterm = signal(SignalKind::terminate()).context("install SIGTERM handler")?;
+    let mut sigint = signal(SignalKind::interrupt()).context("install SIGINT handler")?;
+
+    let result = tokio::select! {
+        result = handle_input(conf, events_rx, player.clone()) => result,
         join = &mut player_join => match join {
             Ok(()) => Err(anyhow::anyhow!("player task exited unexpectedly")),
             Err(e) => Err(anyhow::anyhow!("player task panicked: {e}")),
         },
-    }
+        _ = sigterm.recv() => {
+            info!("SIGTERM received, shutting down");
+            Ok(())
+        }
+        _ = sigint.recv() => {
+            info!("SIGINT received, shutting down");
+            Ok(())
+        }
+    };
+
+    // Best-effort: silence the speaker before tearing down the runtime so we
+    // don't leave a half-decoded buffer in the audio pipeline.
+    let _ = player.stop().await;
+    result
 }
