@@ -74,7 +74,10 @@ pub fn spawn_evdev_reader(reader: Input, tx: Sender<InputEvent>) {
         let mut stream = match reader.device.into_event_stream() {
             Ok(s) => s,
             Err(e) => {
-                warn!("could not turn {:?} into event stream: {e}", reader.device_desc);
+                warn!(
+                    "could not turn {:?} into event stream: {e}",
+                    reader.device_desc
+                );
                 return;
             }
         };

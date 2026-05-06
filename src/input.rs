@@ -114,19 +114,13 @@ gpio:
     fn evdev_event_does_not_hit_gpio_mapping() {
         // gpio chip path used as evdev device must not cross-match.
         let c = config(FULL);
-        assert_eq!(
-            lookup_action(&c, &evdev("/dev/gpiochip0", "17")),
-            None
-        );
+        assert_eq!(lookup_action(&c, &evdev("/dev/gpiochip0", "17")), None);
     }
 
     #[test]
     fn gpio_event_does_not_hit_evdev_mapping() {
         let c = config(FULL);
-        assert_eq!(
-            lookup_action(&c, &gpio("/dev/input/event0", 12345)),
-            None
-        );
+        assert_eq!(lookup_action(&c, &gpio("/dev/input/event0", 12345)), None);
     }
 
     #[test]

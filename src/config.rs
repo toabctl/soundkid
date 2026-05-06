@@ -39,9 +39,10 @@ impl FromStr for Action {
             "VOLUME_DECREASE" => Ok(Action::VolumeDecrease),
             "PAUSE" => Ok(Action::Pause),
             "RESUME" => Ok(Action::Resume),
-            other if other.starts_with("spotify:")
-                || other.starts_with("https://open.spotify.com/")
-                || other.starts_with("http://open.spotify.com/") =>
+            other
+                if other.starts_with("spotify:")
+                    || other.starts_with("https://open.spotify.com/")
+                    || other.starts_with("http://open.spotify.com/") =>
             {
                 Ok(Action::Play(other.to_string()))
             }
@@ -179,10 +180,7 @@ mod tests {
     #[test]
     fn action_play_https_url() {
         let url = "https://open.spotify.com/album/7LQhG0xSDjFiKJnziyB3Zj";
-        assert_eq!(
-            Action::from_str(url).unwrap(),
-            Action::Play(url.into())
-        );
+        assert_eq!(Action::from_str(url).unwrap(), Action::Play(url.into()));
     }
 
     #[test]
@@ -273,10 +271,7 @@ gpio:
         assert_eq!(cfg.alsa.control, "SoftMaster");
         assert_eq!(cfg.spotify.client_id.as_deref(), Some("my-id"));
         let evdev = &cfg.input["/dev/input/event0"];
-        assert_eq!(
-            evdev["12345"],
-            Action::Play("spotify:track:abc".into())
-        );
+        assert_eq!(evdev["12345"], Action::Play("spotify:track:abc".into()));
         assert_eq!(evdev["VOL"], Action::VolumeIncrease);
         let gpio = &cfg.gpio["/dev/gpiochip0"];
         assert_eq!(gpio[&17u32], Action::Pause);
@@ -377,12 +372,9 @@ spotify: {}
     async fn load_from_skips_invalid_yaml_then_parses() {
         let bad = write_temp(": broken yaml ::");
         let good = write_temp(VALID_YAML_2);
-        let cfg = Config::load_from(vec![
-            bad.path().to_path_buf(),
-            good.path().to_path_buf(),
-        ])
-        .await
-        .unwrap();
+        let cfg = Config::load_from(vec![bad.path().to_path_buf(), good.path().to_path_buf()])
+            .await
+            .unwrap();
         assert_eq!(cfg.alsa.control, "SoftMaster");
     }
 
@@ -406,12 +398,9 @@ spotify: {}
     async fn load_from_all_invalid_fails_with_last_parse_error() {
         let bad1 = write_temp(": one ::");
         let bad2 = write_temp("alsa: {}\nspotify: {}\ninput:\n  dev:\n    \"x\": \"BAD_ACTION\"\n");
-        let err = Config::load_from(vec![
-            bad1.path().to_path_buf(),
-            bad2.path().to_path_buf(),
-        ])
-        .await
-        .unwrap_err();
+        let err = Config::load_from(vec![bad1.path().to_path_buf(), bad2.path().to_path_buf()])
+            .await
+            .unwrap_err();
         // Last error should be the second one (the "BAD_ACTION" one).
         assert!(err.to_string().contains("BAD_ACTION"));
     }

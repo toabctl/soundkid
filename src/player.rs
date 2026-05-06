@@ -117,10 +117,14 @@ impl SpotifyPlayer {
 }
 
 async fn oauth_login(client_id: &str) -> Result<librespot_oauth::OAuthToken> {
-    let client = OAuthClientBuilder::new(client_id, "http://127.0.0.1:8898/login", OAUTH_SCOPES.to_vec())
-        .open_in_browser()
-        .build()
-        .map_err(|e| anyhow!("failed to build OAuth client: {e}"))?;
+    let client = OAuthClientBuilder::new(
+        client_id,
+        "http://127.0.0.1:8898/login",
+        OAUTH_SCOPES.to_vec(),
+    )
+    .open_in_browser()
+    .build()
+    .map_err(|e| anyhow!("failed to build OAuth client: {e}"))?;
     client
         .get_access_token_async()
         .await
@@ -260,11 +264,18 @@ mod tests {
     use super::canonicalize_uri;
 
     fn ok(input: &str, expected: &str) {
-        assert_eq!(canonicalize_uri(input).unwrap(), expected, "input={input:?}");
+        assert_eq!(
+            canonicalize_uri(input).unwrap(),
+            expected,
+            "input={input:?}"
+        );
     }
 
     fn err(input: &str) {
-        assert!(canonicalize_uri(input).is_err(), "expected err for {input:?}");
+        assert!(
+            canonicalize_uri(input).is_err(),
+            "expected err for {input:?}"
+        );
     }
 
     // ----- spotify: passthrough -----------------------------------------
@@ -314,7 +325,10 @@ mod tests {
 
     #[test]
     fn https_playlist_converts() {
-        ok("https://open.spotify.com/playlist/p1", "spotify:playlist:p1");
+        ok(
+            "https://open.spotify.com/playlist/p1",
+            "spotify:playlist:p1",
+        );
     }
 
     #[test]
