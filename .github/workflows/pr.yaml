@@ -1,27 +1,40 @@
-on: [push]
+name: ci
 
-name: build
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  check:
-    name: soundkid
+  ci:
+    name: build / test / lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Install stable rust toolchain
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+
+      - name: Install ALSA development headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
-      - name: Run cargo fmt stylecheck
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: -- --check
-      - name: Install deb packages
-        run: sudo apt-get install libasound2-dev
-      - name: Run cargo build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build
+        run: cargo build --all-targets --locked
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
