@@ -2,7 +2,6 @@ use anyhow::{Context, Result, anyhow};
 use log::{info, warn};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 
 fn default_alsa_control() -> String {
@@ -43,7 +42,7 @@ pub struct ConfigAlsa {
 }
 
 impl Config {
-    pub fn load() -> Result<Self> {
+    pub async fn load() -> Result<Self> {
         let candidates = [
             dirs::home_dir().map(|h| h.join(".soundkid.conf")),
             Some(PathBuf::from("/etc/soundkid.conf")),
@@ -52,7 +51,7 @@ impl Config {
         let mut last_err: Option<anyhow::Error> = None;
         for path in candidates.into_iter().flatten() {
             info!("Trying to read config file {path:?}");
-            match fs::read_to_string(&path) {
+            match tokio::fs::read_to_string(&path).await {
                 Ok(contents) => match serde_yaml_ng::from_str::<Config>(&contents) {
                     Ok(cfg) => return Ok(cfg),
                     Err(e) => {

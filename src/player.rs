@@ -53,7 +53,9 @@ impl SpotifyPlayer {
             }
             None => {
                 info!("No cached credentials found, starting OAuth login");
-                Credentials::with_access_token(oauth_login(&session_config.client_id)?.access_token)
+                Credentials::with_access_token(
+                    oauth_login(&session_config.client_id).await?.access_token,
+                )
             }
         };
 
@@ -96,13 +98,14 @@ impl SpotifyPlayer {
     }
 }
 
-fn oauth_login(client_id: &str) -> Result<librespot_oauth::OAuthToken> {
+async fn oauth_login(client_id: &str) -> Result<librespot_oauth::OAuthToken> {
     let client = OAuthClientBuilder::new(client_id, "http://127.0.0.1:8898/login", OAUTH_SCOPES.to_vec())
         .open_in_browser()
         .build()
         .map_err(|e| anyhow!("failed to build OAuth client: {e}"))?;
     client
-        .get_access_token()
+        .get_access_token_async()
+        .await
         .map_err(|e| anyhow!("failed to obtain Spotify access token: {e}"))
 }
 

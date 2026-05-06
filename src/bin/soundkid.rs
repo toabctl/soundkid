@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
     let _cli = Cli::parse();
     info!("Starting soundkid ...");
 
-    let conf = Config::load().context("loading configuration")?;
+    let conf = Config::load().await.context("loading configuration")?;
 
     let (events_tx, events_rx) = mpsc::channel(100);
 
