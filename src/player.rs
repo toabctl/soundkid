@@ -12,11 +12,23 @@ use librespot::playback::{
     player::Player,
 };
 use librespot_oauth::OAuthClientBuilder;
+use thiserror::Error;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::config::ConfigSpotify;
+
+/// Errors visible across the `PlayerControl` boundary.
+///
+/// `SpotifyPlayer::new` still returns `anyhow::Result` because its inputs
+/// are heterogeneous (cache, OAuth, librespot connect, audio backend), and
+/// nothing pattern-matches on those variants today.
+#[derive(Debug, Error)]
+pub enum PlayerError {
+    #[error("player task is no longer running")]
+    Closed,
+}
 
 /// OAuth scopes mirroring what the upstream librespot binary requests.
 /// A subset would suffice for playback, but matching upstream avoids surprises.
@@ -40,10 +52,13 @@ const COMMAND_QUEUE_DEPTH: usize = 8;
 /// tests substitute a fake. `Send + Sync + 'static` is what `tokio::spawn`
 /// demands of anything captured by a spawned task.
 pub trait PlayerControl: Clone + Send + Sync + 'static {
-    fn play(&self, uri: String) -> impl std::future::Future<Output = Result<()>> + Send;
-    fn stop(&self) -> impl std::future::Future<Output = Result<()>> + Send;
-    fn pause(&self) -> impl std::future::Future<Output = Result<()>> + Send;
-    fn resume(&self) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn play(
+        &self,
+        uri: String,
+    ) -> impl std::future::Future<Output = Result<(), PlayerError>> + Send;
+    fn stop(&self) -> impl std::future::Future<Output = Result<(), PlayerError>> + Send;
+    fn pause(&self) -> impl std::future::Future<Output = Result<(), PlayerError>> + Send;
+    fn resume(&self) -> impl std::future::Future<Output = Result<(), PlayerError>> + Send;
 }
 
 /// Cheap, clonable handle to the background player task.
@@ -53,19 +68,19 @@ pub struct SpotifyPlayer {
 }
 
 impl PlayerControl for SpotifyPlayer {
-    async fn play(&self, uri: String) -> Result<()> {
+    async fn play(&self, uri: String) -> Result<(), PlayerError> {
         self.send(Command::Play(uri)).await
     }
 
-    async fn stop(&self) -> Result<()> {
+    async fn stop(&self) -> Result<(), PlayerError> {
         self.send(Command::Stop).await
     }
 
-    async fn pause(&self) -> Result<()> {
+    async fn pause(&self) -> Result<(), PlayerError> {
         self.send(Command::Pause).await
     }
 
-    async fn resume(&self) -> Result<()> {
+    async fn resume(&self) -> Result<(), PlayerError> {
         self.send(Command::Resume).await
     }
 }
@@ -120,11 +135,8 @@ impl SpotifyPlayer {
         Ok((Self { tx }, join))
     }
 
-    async fn send(&self, cmd: Command) -> Result<()> {
-        self.tx
-            .send(cmd)
-            .await
-            .map_err(|_| anyhow!("player task is no longer running"))
+    async fn send(&self, cmd: Command) -> Result<(), PlayerError> {
+        self.tx.send(cmd).await.map_err(|_| PlayerError::Closed)
     }
 }
 

@@ -57,8 +57,8 @@ async fn main() -> Result<()> {
     let mut sigterm = signal(SignalKind::terminate()).context("install SIGTERM handler")?;
     let mut sigint = signal(SignalKind::interrupt()).context("install SIGINT handler")?;
 
-    let result = tokio::select! {
-        result = handle_input(conf, events_rx, player.clone()) => result,
+    let result: Result<()> = tokio::select! {
+        result = handle_input(conf, events_rx, player.clone()) => result.map_err(Into::into),
         join = &mut player_join => match join {
             Ok(()) => Err(anyhow!("player task exited unexpectedly")),
             Err(e) => Err(anyhow!("player task panicked: {e}")),

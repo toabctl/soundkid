@@ -1,5 +1,20 @@
-use anyhow::{Result, anyhow};
 use librespot::core::SpotifyUri;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum UriError {
+    #[error("unrecognized Spotify URI/URL: {0:?}")]
+    UnrecognizedFormat(String),
+    #[error("missing item type in {0:?}")]
+    MissingType(String),
+    #[error("missing item id in {0:?}")]
+    MissingId(String),
+    #[error("not a valid Spotify URI {input:?}: {source}")]
+    InvalidSpotifyUri {
+        input: String,
+        source: librespot::core::Error,
+    },
+}
 
 /// Accept either a `spotify:<type>:<id>` URI or a
 /// `https://open.spotify.com/<type>/<id>` URL and return the canonical
@@ -9,7 +24,7 @@ use librespot::core::SpotifyUri;
 /// (`spotify:traack:...`) or a non-22-character ID is rejected here rather
 /// than silently accepted now and exploding later when the user scans the
 /// card.
-pub fn canonicalize_uri(input: &str) -> Result<String> {
+pub fn canonicalize_uri(input: &str) -> Result<String, UriError> {
     let trimmed = input.trim();
 
     let canonical = if trimmed.starts_with("spotify:") {
@@ -18,20 +33,22 @@ pub fn canonicalize_uri(input: &str) -> Result<String> {
         let path = trimmed
             .strip_prefix("https://open.spotify.com/")
             .or_else(|| trimmed.strip_prefix("http://open.spotify.com/"))
-            .ok_or_else(|| anyhow!("unrecognized Spotify URI/URL: {input:?}"))?;
+            .ok_or_else(|| UriError::UnrecognizedFormat(input.to_string()))?;
         let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
         let mut parts = path.split('/');
         let kind = parts
             .next()
-            .ok_or_else(|| anyhow!("missing item type in {input:?}"))?;
+            .ok_or_else(|| UriError::MissingType(input.to_string()))?;
         let id = parts
             .next()
-            .ok_or_else(|| anyhow!("missing item id in {input:?}"))?;
+            .ok_or_else(|| UriError::MissingId(input.to_string()))?;
         format!("spotify:{kind}:{id}")
     };
 
-    SpotifyUri::from_uri(&canonical)
-        .map_err(|e| anyhow!("not a valid Spotify URI {input:?}: {e}"))?;
+    SpotifyUri::from_uri(&canonical).map_err(|e| UriError::InvalidSpotifyUri {
+        input: input.to_string(),
+        source: e,
+    })?;
     Ok(canonical)
 }
 
@@ -91,7 +108,6 @@ mod tests {
 
     #[test]
     fn spotify_invalid_id_rejected() {
-        // We now validate via SpotifyUri::from_uri; a 3-char id is rejected.
         err("spotify:track:abc");
     }
 

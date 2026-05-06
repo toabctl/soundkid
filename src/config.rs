@@ -1,11 +1,43 @@
-use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use thiserror::Error;
 use tracing::{info, warn};
 
-use crate::uri::canonicalize_uri;
+use crate::uri::{UriError, canonicalize_uri};
+
+#[derive(Debug, Error)]
+pub enum ActionParseError {
+    #[error(
+        "unknown action {0:?}: expected VOLUME_INCREASE, VOLUME_DECREASE, PAUSE, RESUME, \
+         or a spotify: URI / open.spotify.com URL"
+    )]
+    UnknownKeyword(String),
+    #[error(transparent)]
+    InvalidUri(#[from] UriError),
+}
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("read error for {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("parse error in {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: serde_yaml_ng::Error,
+    },
+    #[error(
+        "no readable config file (tried ~/.soundkid.conf and /etc/soundkid.conf, or the paths \
+         passed to load_from)"
+    )]
+    NoCandidate,
+}
 
 fn default_alsa_control() -> String {
     "Master".to_string()
@@ -34,7 +66,7 @@ pub enum Action {
 }
 
 impl FromStr for Action {
-    type Err = anyhow::Error;
+    type Err = ActionParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -49,16 +81,13 @@ impl FromStr for Action {
             {
                 Ok(Action::Play(canonicalize_uri(other)?))
             }
-            other => Err(anyhow!(
-                "unknown action {other:?}: expected VOLUME_INCREASE, VOLUME_DECREASE, \
-                 PAUSE, RESUME, or a spotify: URI / open.spotify.com URL"
-            )),
+            other => Err(ActionParseError::UnknownKeyword(other.to_string())),
         }
     }
 }
 
 impl TryFrom<String> for Action {
-    type Error = anyhow::Error;
+    type Error = ActionParseError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Action::from_str(&value)
     }
@@ -95,11 +124,8 @@ impl Config {
     /// Load from the standard candidate paths: `~/.soundkid.conf` first, then
     /// `/etc/soundkid.conf`. The first one that reads and parses successfully
     /// wins; later candidates only become relevant if earlier ones fail.
-    pub async fn load() -> Result<Self> {
-        let candidates = default_candidates();
-        Self::load_from(candidates)
-            .await
-            .context("unable to load any soundkid config (~/.soundkid.conf or /etc/soundkid.conf)")
+    pub async fn load() -> Result<Self, ConfigError> {
+        Self::load_from(default_candidates()).await
     }
 
     /// Load from an explicit list of candidate paths, in order. The first
@@ -108,28 +134,28 @@ impl Config {
     /// ones, so the last error is reported when nothing succeeds.
     ///
     /// Exposed mainly for tests; production callers should use [`Config::load`].
-    pub async fn load_from<I>(candidates: I) -> Result<Self>
+    pub async fn load_from<I>(candidates: I) -> Result<Self, ConfigError>
     where
         I: IntoIterator<Item = PathBuf>,
     {
-        let mut last_err: Option<anyhow::Error> = None;
+        let mut last_err: Option<ConfigError> = None;
         for path in candidates {
             info!("Trying to read config file {path:?}");
             match tokio::fs::read_to_string(&path).await {
                 Ok(contents) => match serde_yaml_ng::from_str::<Config>(&contents) {
                     Ok(cfg) => return Ok(cfg),
-                    Err(e) => {
-                        warn!("Unable to parse yaml from {path:?}: {e}");
-                        last_err = Some(anyhow!("parse error in {}: {e}", path.display()));
+                    Err(source) => {
+                        warn!("Unable to parse yaml from {path:?}: {source}");
+                        last_err = Some(ConfigError::Parse { path, source });
                     }
                 },
-                Err(e) => {
-                    info!("Unable to read config file {path:?}: {e}");
-                    last_err = Some(anyhow!("read error for {}: {e}", path.display()));
+                Err(source) => {
+                    info!("Unable to read config file {path:?}: {source}");
+                    last_err = Some(ConfigError::Read { path, source });
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| anyhow!("no config file found")))
+        Err(last_err.unwrap_or(ConfigError::NoCandidate))
     }
 }
 
@@ -259,8 +285,8 @@ mod tests {
 
     // ----- Config parsing ------------------------------------------------
 
-    fn parse(yaml: &str) -> Result<Config> {
-        Ok(serde_yaml_ng::from_str(yaml)?)
+    fn parse(yaml: &str) -> Result<Config, serde_yaml_ng::Error> {
+        serde_yaml_ng::from_str(yaml)
     }
 
     #[test]
@@ -421,8 +447,8 @@ spotify: {}
 
     #[tokio::test]
     async fn load_from_empty_candidates_fails() {
-        let res: Result<_> = Config::load_from(Vec::<PathBuf>::new()).await;
-        assert!(res.is_err());
+        let res = Config::load_from(Vec::<PathBuf>::new()).await;
+        assert!(matches!(res, Err(ConfigError::NoCandidate)));
     }
 
     #[tokio::test]

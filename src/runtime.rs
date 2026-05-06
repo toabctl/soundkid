@@ -1,11 +1,10 @@
-use anyhow::Result;
 use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
 use tracing::{debug, info, warn};
 
 use crate::config::{Action, Config};
 use crate::input::{InputEvent, lookup_action};
-use crate::player::PlayerControl;
+use crate::player::{PlayerControl, PlayerError};
 
 /// Drive the dispatch loop: pull events off the channel, look up their
 /// configured action, and invoke the player or amixer accordingly.
@@ -18,7 +17,7 @@ pub async fn handle_input<P: PlayerControl>(
     conf: Config,
     mut events_rx: Receiver<InputEvent>,
     player: P,
-) -> Result<()> {
+) -> Result<(), PlayerError> {
     info!("Input receiver started");
     while let Some(event) = events_rx.recv().await {
         debug!("Received {event:?}");
@@ -87,26 +86,26 @@ mod tests {
     }
 
     impl PlayerControl for FakePlayer {
-        async fn play(&self, uri: String) -> Result<()> {
+        async fn play(&self, uri: String) -> Result<(), PlayerError> {
             self.record(Cmd::Play(uri));
             if *self.fail_play.lock().unwrap() {
-                Err(anyhow::anyhow!("simulated player failure"))
+                Err(PlayerError::Closed)
             } else {
                 Ok(())
             }
         }
 
-        async fn stop(&self) -> Result<()> {
+        async fn stop(&self) -> Result<(), PlayerError> {
             self.record(Cmd::Stop);
             Ok(())
         }
 
-        async fn pause(&self) -> Result<()> {
+        async fn pause(&self) -> Result<(), PlayerError> {
             self.record(Cmd::Pause);
             Ok(())
         }
 
-        async fn resume(&self) -> Result<()> {
+        async fn resume(&self) -> Result<(), PlayerError> {
             self.record(Cmd::Resume);
             Ok(())
         }
@@ -152,7 +151,7 @@ gpio:
 
     /// Drive handle_input to completion: send the events, drop the sender,
     /// await the dispatch loop.
-    async fn run(events: Vec<InputEvent>, fake: FakePlayer) -> Result<()> {
+    async fn run(events: Vec<InputEvent>, fake: FakePlayer) -> Result<(), PlayerError> {
         let conf = build_config();
         let (tx, rx) = mpsc::channel(8);
         let task = tokio::spawn(handle_input(conf, rx, fake));

@@ -1,14 +1,56 @@
-use anyhow::{Context, Result, anyhow};
 use evdev::{Device, EventSummary, KeyCode};
 use futures::stream::StreamExt;
 use gpio_cdev::{AsyncLineEventHandle, Chip, EventRequestFlags, LineRequestFlags};
 use std::fs;
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
+use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, warn};
 
 use crate::input::InputEvent;
+
+#[derive(Debug, Error)]
+pub enum ReaderError {
+    #[error(
+        "input device {0:?} not found. Try a path in /dev/input/ or a device name \
+         (list with `evtest`)."
+    )]
+    DeviceNotFound(String),
+    #[error("could not open input device {path:?}: {source}")]
+    Open {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not open GPIO chip {path:?}: {source}")]
+    GpioChip {
+        path: String,
+        #[source]
+        source: gpio_cdev::Error,
+    },
+    #[error("could not get GPIO line {line} on {path:?}: {source}")]
+    GpioLine {
+        path: String,
+        line: u32,
+        #[source]
+        source: gpio_cdev::Error,
+    },
+    #[error("could not request events on GPIO {path:?}/{line}: {source}")]
+    GpioEvents {
+        path: String,
+        line: u32,
+        #[source]
+        source: gpio_cdev::Error,
+    },
+    #[error("could not register async GPIO handle on {path:?}/{line}: {source}")]
+    GpioAsync {
+        path: String,
+        line: u32,
+        #[source]
+        source: gpio_cdev::Error,
+    },
+}
 
 pub struct Input {
     pub device_desc: String,
@@ -54,15 +96,18 @@ impl Input {
         None
     }
 
-    pub fn new(device_desc: &str) -> Result<Self> {
+    pub fn new(device_desc: &str) -> Result<Self, ReaderError> {
         let path = Self::find_device_path(device_desc).ok_or_else(|| {
             error!(
                 "Cannot resolve device description {device_desc:?}. \
                  Try a path in /dev/input/ or a device name (e.g. from `evtest`)."
             );
-            anyhow!("input device {device_desc:?} not found")
+            ReaderError::DeviceNotFound(device_desc.to_string())
         })?;
-        let device = Device::open(&path)?;
+        let device = Device::open(&path).map_err(|source| ReaderError::Open {
+            path: path.clone(),
+            source,
+        })?;
         info!("Using input device {path:?}");
         Ok(Self {
             device_desc: device_desc.to_string(),
@@ -138,21 +183,34 @@ pub fn spawn_evdev_reader(reader: Input, tx: Sender<InputEvent>) {
 /// All the failure-prone setup (chip open, line lookup, event subscription,
 /// AsyncFd registration) happens here so that callers can fail fast at startup
 /// rather than discovering broken config inside a spawned task.
-pub fn setup_gpio_line(chip_path: &str, line: u32) -> Result<AsyncLineEventHandle> {
-    let mut chip =
-        Chip::new(chip_path).with_context(|| format!("opening GPIO chip {chip_path:?}"))?;
+pub fn setup_gpio_line(chip_path: &str, line: u32) -> Result<AsyncLineEventHandle, ReaderError> {
+    let mut chip = Chip::new(chip_path).map_err(|source| ReaderError::GpioChip {
+        path: chip_path.to_string(),
+        source,
+    })?;
     let chip_line = chip
         .get_line(line)
-        .with_context(|| format!("getting GPIO line {line} on {chip_path:?}"))?;
+        .map_err(|source| ReaderError::GpioLine {
+            path: chip_path.to_string(),
+            line,
+            source,
+        })?;
     let events = chip_line
         .events(
             LineRequestFlags::INPUT,
             EventRequestFlags::FALLING_EDGE,
             "soundkid",
         )
-        .with_context(|| format!("requesting events on GPIO {chip_path:?}/{line}"))?;
-    AsyncLineEventHandle::new(events)
-        .with_context(|| format!("registering async GPIO handle on {chip_path:?}/{line}"))
+        .map_err(|source| ReaderError::GpioEvents {
+            path: chip_path.to_string(),
+            line,
+            source,
+        })?;
+    AsyncLineEventHandle::new(events).map_err(|source| ReaderError::GpioAsync {
+        path: chip_path.to_string(),
+        line,
+        source,
+    })
 }
 
 /// Spawn a task that consumes async GPIO events and forwards them as
