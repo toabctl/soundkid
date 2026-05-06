@@ -17,28 +17,17 @@ use tokio::sync::mpsc;
 struct Cli {}
 
 #[derive(Debug, Clone)]
-enum InputDeviceType {
-    Evdev,
-    Gpio,
+enum InputEvent {
+    Evdev { device: String, scanned: String },
+    Gpio { chip: String, line: u32 },
 }
 
-#[derive(Debug, Clone)]
-struct InputMessage {
-    device_type: InputDeviceType,
-    device: String,
-    id: String,
-}
-
-fn lookup_action<'a>(conf: &'a Config, msg: &InputMessage) -> Option<&'a Action> {
-    match msg.device_type {
-        InputDeviceType::Evdev => conf
-            .input
-            .get(&msg.device)
-            .and_then(|m| m.get(&msg.id)),
-        InputDeviceType::Gpio => {
-            let line: u32 = msg.id.parse().ok()?;
-            conf.gpio.get(&msg.device).and_then(|m| m.get(&line))
+fn lookup_action<'a>(conf: &'a Config, ev: &InputEvent) -> Option<&'a Action> {
+    match ev {
+        InputEvent::Evdev { device, scanned } => {
+            conf.input.get(device).and_then(|m| m.get(scanned))
         }
+        InputEvent::Gpio { chip, line } => conf.gpio.get(chip).and_then(|m| m.get(line)),
     }
 }
 
@@ -55,23 +44,17 @@ async fn amixer(control: &str, change: &str) {
 
 async fn handle_input(
     conf: Config,
-    mut events_rx: mpsc::Receiver<InputMessage>,
+    mut events_rx: mpsc::Receiver<InputEvent>,
     player: SpotifyPlayer,
 ) {
     info!("Input receiver started");
-    while let Some(msg) = events_rx.recv().await {
-        debug!(
-            "Received message from {:?} {:?}: {:?}",
-            msg.device_type, msg.device, msg.id
-        );
-        let Some(action) = lookup_action(&conf, &msg) else {
-            warn!(
-                "no action for message {:?} on device {:?}",
-                msg.id, msg.device
-            );
+    while let Some(event) = events_rx.recv().await {
+        debug!("Received {event:?}");
+        let Some(action) = lookup_action(&conf, &event) else {
+            warn!("no action configured for {event:?}");
             continue;
         };
-        info!("Action {action:?} on device {:?}", msg.device);
+        info!("Dispatching {action:?} from {event:?}");
         match action {
             Action::VolumeIncrease => amixer(&conf.alsa.control, "5%+").await,
             Action::VolumeDecrease => amixer(&conf.alsa.control, "5%-").await,
@@ -82,7 +65,7 @@ async fn handle_input(
     }
 }
 
-fn spawn_evdev_reader(reader: Input, tx: mpsc::Sender<InputMessage>) {
+fn spawn_evdev_reader(reader: Input, tx: mpsc::Sender<InputEvent>) {
     tokio::spawn(async move {
         let mut stream = match reader.device.into_event_stream() {
             Ok(s) => s,
@@ -123,12 +106,11 @@ fn spawn_evdev_reader(reader: Input, tx: mpsc::Sender<InputMessage>) {
                         continue;
                     }
                     debug!("Input event on {:?}: {buf:?}", reader.device_desc);
-                    let msg = InputMessage {
-                        device_type: InputDeviceType::Evdev,
+                    let event = InputEvent::Evdev {
                         device: reader.device_desc.clone(),
-                        id: buf.clone(),
+                        scanned: buf.clone(),
                     };
-                    if tx.send(msg).await.is_err() {
+                    if tx.send(event).await.is_err() {
                         return;
                     }
                     buf.clear();
@@ -139,55 +121,54 @@ fn spawn_evdev_reader(reader: Input, tx: mpsc::Sender<InputMessage>) {
     });
 }
 
-fn spawn_gpio_reader(device: String, line_offset: u32, tx: mpsc::Sender<InputMessage>) {
+fn spawn_gpio_reader(chip_path: String, line: u32, tx: mpsc::Sender<InputEvent>) {
     tokio::spawn(async move {
-        let mut chip = match Chip::new(&device) {
+        let mut chip = match Chip::new(&chip_path) {
             Ok(c) => c,
             Err(e) => {
-                warn!("could not open GPIO chip {device:?}: {e}");
+                warn!("could not open GPIO chip {chip_path:?}: {e}");
                 return;
             }
         };
-        let line = match chip.get_line(line_offset) {
+        let chip_line = match chip.get_line(line) {
             Ok(l) => l,
             Err(e) => {
-                warn!("could not get GPIO line {line_offset} on {device:?}: {e}");
+                warn!("could not get GPIO line {line} on {chip_path:?}: {e}");
                 return;
             }
         };
-        let events = match line.events(
+        let events = match chip_line.events(
             LineRequestFlags::INPUT,
             EventRequestFlags::FALLING_EDGE,
             "soundkid",
         ) {
             Ok(e) => e,
             Err(e) => {
-                warn!("could not request events on GPIO {device:?}/{line_offset}: {e}");
+                warn!("could not request events on GPIO {chip_path:?}/{line}: {e}");
                 return;
             }
         };
         let mut events = match AsyncLineEventHandle::new(events) {
             Ok(e) => e,
             Err(e) => {
-                warn!("could not wrap GPIO events as async on {device:?}/{line_offset}: {e}");
+                warn!("could not wrap GPIO events as async on {chip_path:?}/{line}: {e}");
                 return;
             }
         };
-        info!("Watching GPIO line {line_offset} on {device}");
+        info!("Watching GPIO line {line} on {chip_path}");
         while let Some(event) = events.next().await {
             match event {
-                Ok(ev) => debug!("GPIO event on {device:?}/{line_offset}: {ev:?}"),
+                Ok(ev) => debug!("GPIO event on {chip_path:?}/{line}: {ev:?}"),
                 Err(e) => {
-                    warn!("GPIO event error on {device:?}/{line_offset}: {e}");
+                    warn!("GPIO event error on {chip_path:?}/{line}: {e}");
                     return;
                 }
             }
-            let msg = InputMessage {
-                device_type: InputDeviceType::Gpio,
-                device: device.clone(),
-                id: line_offset.to_string(),
+            let event = InputEvent::Gpio {
+                chip: chip_path.clone(),
+                line,
             };
-            if tx.send(msg).await.is_err() {
+            if tx.send(event).await.is_err() {
                 return;
             }
         }
